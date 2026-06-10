@@ -1,0 +1,4 @@
+# This project_id is only used by the Supabase CLI (supabase db push).
+# For local VS Code development, use: node scripts/setup-db.js instead.
+# Replace with your own project ref if you want to use `supabase db push`.
+project_id = "your-project-ref-here"
