@@ -10,7 +10,7 @@ CLAUDE_KEY = os.getenv("ANTHROPIC_API_KEY")
 # available. Decouple it from the chat LLM key so projects running on Claude
 # or NVIDIA Nemotron for chat can still use Gemini embeddings (or any future
 # embedding backend) for the LAMA nucleus / shells / bonds / gravity graph.
-EMBED_KEY = GEMINI_KEY  # embeddings reuse the chat key
+EMBED_KEY = os.getenv("EMBEDDING_API_KEY") or os.getenv("GEMINI_EMBED_API_KEY") or GEMINI_KEY
 EMBED_MODEL = os.getenv("EMBEDDING_MODEL", "models/text-embedding-004")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-20250514")
