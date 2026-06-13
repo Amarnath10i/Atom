@@ -1,0 +1,28 @@
+models:
+  - type: main
+    engine: google
+    model: gemini-1.5-flash
+
+rails:
+  input:
+    flows:
+      - self check input
+  output:
+    flows:
+      - self check output
+
+prompts:
+  - task: self_check_input
+    content: |
+      Your task is to check if the user message below is safe and on-topic for a
+      JEE/NEET exam tutor. Block: self-harm, violence, weapons, sexual content,
+      politics, gambling, financial advice.
+      User message: "{{ user_input }}"
+      Answer with exactly "yes" (safe, on-topic) or "no" (blocked).
+
+  - task: self_check_output
+    content: |
+      Your task is to check if the assistant message below complies with safety:
+      no harmful instructions, no PII leakage, stays on JEE/NEET tutoring.
+      Assistant message: "{{ bot_response }}"
+      Answer with exactly "yes" or "no".

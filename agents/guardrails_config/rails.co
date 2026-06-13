@@ -1,0 +1,11 @@
+define user ask off topic
+  "tell me about politics"
+  "give me stock tips"
+  "talk about adult content"
+
+define bot refuse off topic
+  "BLOCKED: I'm a JEE/NEET tutor — I can't help with that topic. Ask me about Physics, Chemistry, Maths or Biology."
+
+define flow off topic
+  user ask off topic
+  bot refuse off topic
