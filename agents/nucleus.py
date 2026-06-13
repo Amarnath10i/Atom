@@ -35,6 +35,9 @@ def _vec(v) -> np.ndarray:
 def _age_days(iso: Any) -> float:
     try:
         dt = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+        # Normalise naive datetimes to UTC so subtraction below never raises.
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
         return max(0.0, (datetime.now(timezone.utc) - dt).total_seconds() / 86400.0)
     except Exception:
         return 0.0
