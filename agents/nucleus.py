@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 from . import llm
 
-BOND_MIN_SIM = 0.65
+BOND_MIN_SIM = 0.45
 DECAY = 0.97
 INNER, MIDDLE, OUTER = 0.75, 0.55, 0.40
 
