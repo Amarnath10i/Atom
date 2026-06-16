@@ -281,8 +281,13 @@ IMPORTANT — atom subject must be exactly one of: Physics | Chemistry | Maths |
           // multimodal `parts` shape the providers actually understand, so the
           // model can now see image and PDF content instead of just a filename.
           messages: convertToCoreMessages(messages as never),
-          // cap the agentic tool-call loop at 10 steps
-          stopWhen: stepCountIs(10),
+          // ai-sdk v4: maxSteps governs the agentic tool-call loop. In ai-sdk
+          // v6 this becomes `stopWhen: stepCountIs(10)` (import stepCountIs from
+          // "ai"). DO NOT shim it locally as `(n) => ({ maxSteps: n })` —
+          // stopWhen expects a function `({ steps }) => boolean` and the shim
+          // crashes the loop the moment any tool (diagnose_weakness,
+          // generate_practice, update_plan, reflect_session) is called.
+          maxSteps: 10,
           tools: {
             // Agent 2: Diagnostic
             diagnose_weakness: tool({
