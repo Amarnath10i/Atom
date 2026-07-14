@@ -6,6 +6,9 @@ import { useChat } from "@ai-sdk/react";
 import { MemoryGraph } from "@/components/MemoryGraph";
 import { AtomStateBadge } from "@/components/AtomStateBadge";
 import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import remarkGfm from "remark-gfm";
+import rehypeKatex from "rehype-katex";
 import {
   Brain, Atom, AlertTriangle, Sparkles, ArrowRight, ArrowUp,
   MessageSquare, Compass, FlaskConical, Workflow, X, Maximize2, Minimize2
@@ -133,7 +136,13 @@ function MyArchitecture() {
           </div>
         ) : (
           <div className={graphFullscreen ? "flex-1 min-h-0" : ""}>
-            <MemoryGraph atoms={data.atoms} bonds={data.bonds} className={graphFullscreen ? "h-full" : undefined} />
+            <MemoryGraph
+              atoms={data.atoms.filter((a: any) =>
+                ["physics", "chemistry", "maths", "biology"].includes(a.subject?.toLowerCase())
+              )}
+              bonds={data.bonds}
+              className={graphFullscreen ? "h-full" : undefined}
+            />
           </div>
         )}
       </section>
@@ -356,7 +365,23 @@ function ChatPanel({
                 )}
                 {isUser
                   ? <div className="whitespace-pre-wrap">{text}</div>
-                  : <div className="prose-tutor"><ReactMarkdown>{text || "…"}</ReactMarkdown></div>
+                  : <div className="prose-tutor">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkMath, remarkGfm]}
+                        rehypePlugins={[rehypeKatex]}
+                        components={{
+                          img: ({ src, alt, ...props }) => (
+                            <img
+                              src={src}
+                              alt={alt || "diagram"}
+                              className="my-3 max-w-full rounded-lg border border-border"
+                              loading="lazy"
+                              {...props}
+                            />
+                          ),
+                        }}
+                      >{text || "…"}</ReactMarkdown>
+                    </div>
                 }
               </div>
             </div>

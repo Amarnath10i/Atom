@@ -15,10 +15,9 @@
  */
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { recordMockTest } from "@/lib/learning-os.functions";
+import { recordMockTest, generateDynamicPaper } from "@/lib/learning-os.functions";
 import {
   PAPER_PATTERNS,
-  assemblePaper,
   type MCQ,
   type PaperPattern,
 } from "@/lib/mock-test-bank";
@@ -63,6 +62,7 @@ function TakeMockTestPage() {
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loadingQuestions, setLoadingQuestions] = useState(false);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const pattern = PAPER_PATTERNS[patternKey];
@@ -100,16 +100,24 @@ function TakeMockTestPage() {
     setPerQTimer(0);
   };
 
-  const startTest = () => {
-    const p = assemblePaper(pattern);
-    setPaper(p);
-    setAnswers({});
-    setCurrent(0);
-    setRemainingSec(pattern.durationMin * 60);
-    setPerQTimer(0);
-    setResult(null);
-    setError(null);
+  const startTest = async () => {
     setPhase("running");
+    setLoadingQuestions(true); // Need to add this state if not present, or just let UI show blank briefly
+    try {
+      const p = await generateDynamicPaper({ data: { patternKey, weakTopics: [] } }); // Could fetch actual weak topics here
+      setPaper(p);
+      setAnswers({});
+      setCurrent(0);
+      setRemainingSec(pattern.durationMin * 60);
+      setPerQTimer(0);
+      setResult(null);
+      setError(null);
+    } catch (err) {
+      setError("Failed to generate test");
+      setPhase("select");
+    } finally {
+      setLoadingQuestions(false);
+    }
   };
 
   const goto = (idx: number) => {
@@ -297,11 +305,22 @@ function TakeMockTestPage() {
             placeholder="e.g. Pre-board #3"
             className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
           />
+          {error && <div className="mt-4 text-sm font-semibold text-rose-500">{error}</div>}
           <button
             onClick={startTest}
-            className="mt-4 inline-flex items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground hover:opacity-90"
+            disabled={loadingQuestions}
+            className="mt-6 flex w-full items-center justify-center gap-2 rounded-full bg-primary py-3 font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition"
           >
-            <Play className="h-4 w-4" /> Start {pattern.totalMarks}-mark test ({pattern.durationMin} min)
+            {loadingQuestions ? (
+              <>
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground border-r-transparent" />
+                Generating unique AI questions... (this may take a minute)
+              </>
+            ) : (
+              <>
+                <Play className="h-4 w-4" /> Start {pattern.totalMarks}-mark test ({pattern.durationMin} min)
+              </>
+            )}
           </button>
           <p className="mt-3 text-xs text-muted-foreground flex items-start gap-1.5">
             <AlertTriangle className="h-3.5 w-3.5 mt-px shrink-0" />

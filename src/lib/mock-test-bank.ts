@@ -3,8 +3,10 @@
 // topic + subtopic metadata (used to drive memory_atoms + weak_topics), and a
 // difficulty 1-5. Expected time is the per-question budget in seconds.
 //
-// The bank is intentionally compact (~60 Q) and is *sampled* with subject
-// quotas to assemble 100 / 120 / 160-mark tests on demand.
+// The static bank is intentionally compact (~60 Q).
+// The system prefers `generateDynamicPaper` (in learning-os.functions) which uses the agents API to
+// generate infinite personalized questions on the fly, falling back to this static
+// bank only if the AI service is offline.
 
 export type MCQ = {
   id: string;

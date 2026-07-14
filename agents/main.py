@@ -25,7 +25,7 @@ load_dotenv()  # pull .env from cwd (project root when run from there)
 # Also try parent dir in case launched from agents/
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
-from . import guard, curator, diagnostic, planner, state_inference, nucleus, llm
+from . import guard, curator, diagnostic, planner, state_inference, nucleus, llm, question_gen
 
 app = FastAPI(title="LAMA Agents", version="1.0.0")
 app.add_middleware(
@@ -116,6 +116,23 @@ class NucleusDecayIn(BaseModel):
 def nucleus_decay_ep(body: NucleusDecayIn):
     return {"updates": nucleus.decay(body.atoms)}
 
+
+class QuestionGenIn(BaseModel):
+    subject: str
+    topics: list[str]
+    difficulty_range: list[int]
+    count: int = 3
+    exclude_ids: list[str] = None
+
+@app.post("/generate-questions")
+def generate_questions_ep(body: QuestionGenIn):
+    return question_gen.generate(
+        subject=body.subject,
+        topics=body.topics,
+        difficulty_range=body.difficulty_range,
+        count=body.count,
+        exclude_ids=body.exclude_ids
+    )
 
 if __name__ == "__main__":
     import uvicorn

@@ -21,7 +21,7 @@ import process from "node:process";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createAnthropic } from "@ai-sdk/anthropic";
 
-export type ProviderName = "nvidia" | "gemini" | "claude";
+export type ProviderName = "nvidia" | "gemini" | "claude" | "glm";
 
 export interface AIProvider {
   name: ProviderName;
@@ -108,12 +108,13 @@ export async function getAIProvider(requested?: ProviderName | string): Promise<
   const geminiKeys = collectKeys("GEMINI_API_KEY");
   const claudeKeys = collectKeys("ANTHROPIC_API_KEY");
   const nvidiaKey = process.env.NVIDIA_API_KEY;
+  const glmKey = process.env.GLM_API_KEY;
 
-  if (!geminiKeys.length && !claudeKeys.length && !nvidiaKey) {
+  if (!geminiKeys.length && !claudeKeys.length && !nvidiaKey && !glmKey) {
     throw new Error(
       "No LLM API key found.\n" +
         "Set GEMINI_API_KEY (or GEMINI_API_KEY_1..5), ANTHROPIC_API_KEY (or ANTHROPIC_API_KEY_1..5),\n" +
-        "or NVIDIA_API_KEY in your .env file.",
+        "GLM_API_KEY, or NVIDIA_API_KEY in your .env file.",
     );
   }
 
@@ -130,11 +131,25 @@ export async function getAIProvider(requested?: ProviderName | string): Promise<
     if (!nvidiaKey) throw new Error("AI_PROVIDER=nvidia but NVIDIA_API_KEY is not set.");
     return await buildNvidia(nvidiaKey);
   }
+  if (preferred === "glm") {
+    if (!glmKey) throw new Error("AI_PROVIDER=glm but GLM_API_KEY is not set.");
+    return await buildGLM(glmKey);
+  }
 
-  // Auto-detect default: Gemini → Claude → NVIDIA.
+  // Auto-detect default: Gemini → Claude → GLM → NVIDIA.
   if (geminiKeys.length) return buildGemini(geminiKeys);
   if (claudeKeys.length) return buildClaude(claudeKeys);
+  if (glmKey) return await buildGLM(glmKey);
   return await buildNvidia(nvidiaKey!);
+}
+
+/** Zhipu GLM — OpenAI-compatible endpoint. Used as a fallback provider. */
+async function buildGLM(apiKey: string): Promise<AIProvider> {
+  const { createOpenAI } = await import("@ai-sdk/openai");
+  const baseURL = process.env.GLM_BASE_URL ?? "https://open.bigmodel.cn/api/paas/v4";
+  const modelId = process.env.GLM_MODEL ?? "glm-4-flash";
+  const glm = createOpenAI({ baseURL, apiKey, compatibility: "compatible" });
+  return { name: "glm", model: glm(modelId), modelId, keyCount: 1 };
 }
 
 async function buildNvidia(apiKey: string): Promise<AIProvider> {

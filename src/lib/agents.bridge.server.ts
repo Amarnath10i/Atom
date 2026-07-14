@@ -60,4 +60,6 @@ export const agents = {
     post("/nucleus/search", { query, atoms, k }, { hits: [] }),
   nucleusDecay: (atoms: unknown[]) =>
     post("/nucleus/decay", { atoms }, { updates: [] }),
+  generateQuestions: (subject: string, topics: string[], difficulty_range: number[], count = 3, exclude_ids?: string[]) =>
+    post("/generate-questions", { subject, topics, difficulty_range, count, exclude_ids }, { questions: [] }),
 };

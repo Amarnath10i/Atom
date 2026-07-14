@@ -365,7 +365,21 @@ function MessageBubble({ message }) {
           <div className="whitespace-pre-wrap">{text}</div>
         ) : (
           <div className="prose prose-sm dark:prose-invert max-w-none">
-            <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>{text}</ReactMarkdown>
+            <ReactMarkdown
+              remarkPlugins={[remarkMath, remarkGfm]}
+              rehypePlugins={[rehypeKatex]}
+              components={{
+                img: ({ src, alt, ...props }) => (
+                  <img
+                    src={src}
+                    alt={alt || "diagram"}
+                    className="my-3 max-w-full rounded-lg border border-border"
+                    loading="lazy"
+                    {...props}
+                  />
+                ),
+              }}
+            >{text}</ReactMarkdown>
           </div>
         )}
       </div>

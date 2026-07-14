@@ -13,6 +13,7 @@
 
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { getWeightage } from "@/lib/exam-weightage";
 import { z } from "zod";
 
 const StudentId = z.object({ studentId: z.string().uuid() });
@@ -26,6 +27,49 @@ function ebbinghaus(strength: number, reviewCount: number, daysSince: number): n
   const stabilityFactor = 1 + 0.1 * reviewCount;
   const decayed = strength * Math.exp(-0.07 * daysSince / stabilityFactor);
   return Math.max(0.05, Math.min(1, decayed));
+}
+
+/**
+ * SuperMemo 2 (SM-2) Algorithm implementation
+ * @param quality 0-5 (0 = complete blackout, 5 = perfect recall)
+ * @param ef Previous easiness factor (default 2.5)
+ * @param interval Previous interval in days (default 0)
+ * @param repetitions Previous consecutive correct repetitions (default 0)
+ */
+export function calculateSM2(quality: number, ef: number = 2.5, interval: number = 0, repetitions: number = 0) {
+  let nextEF = ef;
+  let nextInterval = interval;
+  let nextRepetitions = repetitions;
+
+  if (quality >= 3) {
+    // Correct response
+    if (repetitions === 0) {
+      nextInterval = 1;
+    } else if (repetitions === 1) {
+      nextInterval = 6;
+    } else {
+      nextInterval = Math.round(interval * ef);
+    }
+    nextRepetitions = repetitions + 1;
+  } else {
+    // Incorrect response
+    nextRepetitions = 0;
+    nextInterval = 1;
+  }
+
+  // Update Easiness Factor
+  nextEF = ef + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02));
+  if (nextEF < 1.3) nextEF = 1.3;
+
+  const nextReviewDate = new Date();
+  nextReviewDate.setDate(nextReviewDate.getDate() + nextInterval);
+
+  return {
+    ef: Number(nextEF.toFixed(3)),
+    interval: nextInterval,
+    repetitions: nextRepetitions,
+    nextReviewDate: nextReviewDate.toISOString(),
+  };
 }
 
 function daysBetween(a: string | Date, b: string | Date = new Date()): number {
@@ -56,15 +100,46 @@ export const getForgettingCurves = createServerFn({ method: "GET" })
       // Past 7 days + future 30 days
       for (let d = -7; d <= 30; d++) {
         const dFrom = Math.max(0, daysSinceReview + d);
+        // Blend SM-2 interval concepts with visual decay for the curve
+        const stabilityFactor = a.sm2_interval ? (1 + 0.5 * Math.sqrt(a.sm2_interval)) : (1 + 0.1 * a.reviews);
+        const decayed = a.strength * Math.exp(-0.07 * dFrom / stabilityFactor);
         points.push({
           day: d,
-          strength: parseFloat(ebbinghaus(a.strength, a.reviews, dFrom).toFixed(3)),
+          strength: parseFloat(Math.max(0.05, Math.min(1, decayed)).toFixed(3)),
         });
       }
       return { atomId: a.id, topic: a.topic, subject: a.subject, currentStrength: a.strength, points };
     });
 
     return { curves, atoms: atoms ?? [] };
+  });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PHASE 1 — SM-2 Due Atoms
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const getDueAtoms = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const uid = context.userId;
+
+    const { data: student } = await supabaseAdmin
+      .from("students").select("id").eq("auth_user_id", uid).maybeSingle();
+    if (!student) return [];
+
+    const now = new Date().toISOString();
+    
+    // Fetch atoms where next_review_date is in the past or null (newly added)
+    const { data: atoms } = await supabaseAdmin
+      .from("memory_atoms")
+      .select("*")
+      .eq("student_id", student.id)
+      .or(`sm2_next_review_date.lte.${now},sm2_next_review_date.is.null`)
+      .order("sm2_next_review_date", { ascending: true, nullsFirst: true })
+      .limit(20);
+
+    return atoms ?? [];
   });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -174,7 +249,7 @@ export const getCurriculumGraph = createServerFn({ method: "GET" })
       const seen = new Set<string>();
       const nodes: Array<{
         id: string; subject: string; topic: string; prerequisites: string[];
-        mastery: number; priority: number; estimatedHours: number;
+        mastery: number; priority: number; estimatedHours: number; examWeight: number;
       }> = [];
       for (const [subject, topics] of Object.entries(syllabusMap)) {
         for (const { topic, prereqs, hours, priority } of topics) {
@@ -185,9 +260,10 @@ export const getCurriculumGraph = createServerFn({ method: "GET" })
             (a) => a.topic.toLowerCase().includes(topic.toLowerCase()) ||
                    topic.toLowerCase().includes(a.topic.toLowerCase())
           );
+          const examWeight = getWeightage(viewExam, subject, topic);
           nodes.push({
             id, subject, topic, prerequisites: prereqs,
-            mastery: atom ? atom.strength : 0, priority, estimatedHours: hours,
+            mastery: atom ? atom.strength : 0, priority, estimatedHours: hours, examWeight
           });
         }
       }
@@ -205,7 +281,6 @@ export const getCurriculumGraph = createServerFn({ method: "GET" })
 
       const syllabusMap = buildSyllabus(student.exam);
 
-      // Seed curriculum from syllabus + actual atoms
       const seeded: Array<{
         student_id: string; subject: string; topic: string;
         prerequisites: string[]; mastery: number; priority: number; estimated_hours: number;
@@ -221,6 +296,7 @@ export const getCurriculumGraph = createServerFn({ method: "GET" })
             (a) => a.topic.toLowerCase().includes(topic.toLowerCase()) ||
                    topic.toLowerCase().includes(a.topic.toLowerCase())
           );
+          const examWeight = getWeightage(student.exam, subject, topic);
           seeded.push({
             student_id: student.id,
             subject,
@@ -245,6 +321,7 @@ export const getCurriculumGraph = createServerFn({ method: "GET" })
         mastery: n.mastery,
         priority: n.priority,
         estimatedHours: n.estimated_hours,
+        examWeight: getWeightage(student.exam, n.subject, n.topic),
       }));
 
       const edges = buildEdges(nodes);
@@ -259,6 +336,7 @@ export const getCurriculumGraph = createServerFn({ method: "GET" })
       mastery: n.mastery ?? 0,
       priority: n.priority ?? 5,
       estimatedHours: n.estimated_hours ?? 2,
+      examWeight: getWeightage(student.exam, n.subject, n.topic),
     }));
     const edges = buildEdges(nodes);
     return { nodes, edges, student };
@@ -634,6 +712,70 @@ export const getSimulationHistory = createServerFn({ method: "GET" })
     return { runs: runs ?? [] };
   });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PHASE 1 — Dynamic Mock Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const generateDynamicPaper = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) =>
+    z.object({
+      patternKey: z.string(),
+      weakTopics: z.array(z.string()).optional(),
+    }).parse(i)
+  )
+  .handler(async ({ data }) => {
+    const { PAPER_PATTERNS, QUESTION_BANK } = await import("@/lib/mock-test-bank");
+    const { agents } = await import("@/lib/agents.bridge.server");
+
+    const pattern = (PAPER_PATTERNS as any)[data.patternKey];
+    if (!pattern) throw new Error("Invalid pattern");
+
+    const chosen: any[] = [];
+    const usedIds = new Set<string>();
+
+    function shuffle<T>(arr: T[]): T[] {
+      const a = [...arr];
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    }
+
+    try {
+      for (const [subject, count] of Object.entries(pattern.distribution)) {
+        const res = await agents.generateQuestions(
+          subject,
+          data.weakTopics?.length ? data.weakTopics.slice(0, 3) : ["General"],
+          [2, 3, 4],
+          count as number,
+          Array.from(usedIds)
+        );
+
+        const generated = (res as any).questions ?? [];
+        for (const q of generated) {
+          if (chosen.length < pattern.totalQuestions) {
+            chosen.push(q);
+            usedIds.add(q.id);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to generate dynamic questions, falling back to static", e);
+    }
+
+    if (chosen.length < pattern.totalQuestions) {
+      const pool = shuffle(QUESTION_BANK.filter((q) => !usedIds.has(q.id)));
+      for (const q of pool) {
+        if (chosen.length >= pattern.totalQuestions) break;
+        chosen.push(q);
+        usedIds.add(q.id);
+      }
+    }
+
+    return shuffle(chosen);
+  });
 // ─────────────────────────────────────────────────────────────────────────────
 // PHASE 2 — Enhanced Critic
 // Richer reflection that breaks down by subject and suggests next steps
