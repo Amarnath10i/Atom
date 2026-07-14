@@ -156,13 +156,44 @@ export const recordOutcome = createServerFn({ method: "POST" })
 
 export const getCurriculumGraph = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
-  .handler(async ({ context }) => {
+  .inputValidator((i: unknown) => (i ?? {}) as { exam?: "JEE" | "NEET" })
+  .handler(async ({ context, data }) => {
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const uid = context.userId;
 
     const { data: student } = await supabaseAdmin
       .from("students").select("*").eq("auth_user_id", uid).maybeSingle();
     if (!student) return { nodes: [], edges: [], student: null };
+
+    // Exam toggle: preview any exam's curriculum without touching stored progress.
+    const viewExam = data?.exam === "JEE" || data?.exam === "NEET" ? data.exam : null;
+    if (viewExam && viewExam !== student.exam) {
+      const { data: atoms } = await supabaseAdmin
+        .from("memory_atoms").select("*").eq("student_id", student.id);
+      const syllabusMap = buildSyllabus(viewExam);
+      const seen = new Set<string>();
+      const nodes: Array<{
+        id: string; subject: string; topic: string; prerequisites: string[];
+        mastery: number; priority: number; estimatedHours: number;
+      }> = [];
+      for (const [subject, topics] of Object.entries(syllabusMap)) {
+        for (const { topic, prereqs, hours, priority } of topics) {
+          const id = `${subject}::${topic}`;
+          if (seen.has(id)) continue;
+          seen.add(id);
+          const atom = (atoms ?? []).find(
+            (a) => a.topic.toLowerCase().includes(topic.toLowerCase()) ||
+                   topic.toLowerCase().includes(a.topic.toLowerCase())
+          );
+          nodes.push({
+            id, subject, topic, prerequisites: prereqs,
+            mastery: atom ? atom.strength : 0, priority, estimatedHours: hours,
+          });
+        }
+      }
+      const edges = buildEdges(nodes);
+      return { nodes, edges, student: { ...student, exam: viewExam } };
+    }
 
     const { data: dbNodes } = await supabaseAdmin
       .from("curriculum_nodes").select("*").eq("student_id", student.id);
@@ -248,83 +279,135 @@ function buildEdges(nodes: Array<{ id: string; topic: string; prerequisites: str
 }
 
 function buildSyllabus(exam: string) {
+  // Chapters follow the official NTA syllabus (JEE Main 2025 / NEET UG).
+  // priority approximates exam weightage (10 = highest-scoring units).
   if (exam === "JEE") {
     return {
       "Mathematics": [
-        { topic: "Sets & Functions", prereqs: [], hours: 3, priority: 6 },
-        { topic: "Limits & Continuity", prereqs: ["Sets & Functions"], hours: 4, priority: 7 },
-        { topic: "Differentiation", prereqs: ["Limits & Continuity"], hours: 5, priority: 9 },
-        { topic: "Integration", prereqs: ["Differentiation"], hours: 6, priority: 9 },
-        { topic: "Differential Equations", prereqs: ["Integration"], hours: 4, priority: 7 },
-        { topic: "Vectors & 3D", prereqs: ["Differentiation"], hours: 4, priority: 8 },
-        { topic: "Complex Numbers", prereqs: ["Sets & Functions"], hours: 3, priority: 7 },
-        { topic: "Matrices & Determinants", prereqs: ["Sets & Functions"], hours: 4, priority: 8 },
-        { topic: "Probability", prereqs: ["Sets & Functions"], hours: 3, priority: 7 },
-        { topic: "Coordinate Geometry", prereqs: ["Sets & Functions"], hours: 5, priority: 8 },
+        { topic: "Sets, Relations & Functions", prereqs: [], hours: 3, priority: 6 },
+        { topic: "Complex Numbers & Quadratic Equations", prereqs: ["Sets, Relations & Functions"], hours: 4, priority: 8 },
+        { topic: "Matrices & Determinants", prereqs: ["Sets, Relations & Functions"], hours: 4, priority: 8 },
+        { topic: "Permutations & Combinations", prereqs: ["Sets, Relations & Functions"], hours: 3, priority: 7 },
+        { topic: "Binomial Theorem", prereqs: ["Permutations & Combinations"], hours: 2, priority: 7 },
+        { topic: "Sequence & Series", prereqs: ["Sets, Relations & Functions"], hours: 3, priority: 7 },
+        { topic: "Trigonometry", prereqs: ["Sets, Relations & Functions"], hours: 4, priority: 7 },
+        { topic: "Limit, Continuity & Differentiability", prereqs: ["Trigonometry"], hours: 5, priority: 9 },
+        { topic: "Integral Calculus", prereqs: ["Limit, Continuity & Differentiability"], hours: 6, priority: 10 },
+        { topic: "Differential Equations", prereqs: ["Integral Calculus"], hours: 3, priority: 8 },
+        { topic: "Coordinate Geometry", prereqs: ["Trigonometry"], hours: 5, priority: 9 },
+        { topic: "Three Dimensional Geometry", prereqs: ["Coordinate Geometry"], hours: 3, priority: 8 },
+        { topic: "Vector Algebra", prereqs: ["Three Dimensional Geometry"], hours: 3, priority: 8 },
+        { topic: "Statistics & Probability", prereqs: ["Permutations & Combinations"], hours: 3, priority: 8 },
       ],
       "Physics": [
-        { topic: "Kinematics", prereqs: [], hours: 3, priority: 9 },
+        { topic: "Physics & Measurement", prereqs: [], hours: 2, priority: 5 },
+        { topic: "Kinematics", prereqs: ["Physics & Measurement"], hours: 3, priority: 8 },
         { topic: "Laws of Motion", prereqs: ["Kinematics"], hours: 4, priority: 9 },
         { topic: "Work, Energy & Power", prereqs: ["Laws of Motion"], hours: 3, priority: 8 },
-        { topic: "Rotational Motion", prereqs: ["Laws of Motion"], hours: 5, priority: 8 },
+        { topic: "Rotational Motion", prereqs: ["Laws of Motion"], hours: 5, priority: 9 },
         { topic: "Gravitation", prereqs: ["Laws of Motion"], hours: 3, priority: 7 },
-        { topic: "Waves & Oscillations", prereqs: ["Kinematics"], hours: 4, priority: 8 },
+        { topic: "Properties of Solids & Liquids", prereqs: ["Laws of Motion"], hours: 3, priority: 7 },
+        { topic: "Thermodynamics", prereqs: ["Work, Energy & Power"], hours: 4, priority: 8 },
+        { topic: "Kinetic Theory of Gases", prereqs: ["Thermodynamics"], hours: 2, priority: 7 },
+        { topic: "Oscillations & Waves", prereqs: ["Laws of Motion"], hours: 4, priority: 8 },
         { topic: "Electrostatics", prereqs: [], hours: 5, priority: 9 },
-        { topic: "Current Electricity", prereqs: ["Electrostatics"], hours: 4, priority: 8 },
-        { topic: "Magnetic Effects", prereqs: ["Current Electricity"], hours: 4, priority: 8 },
-        { topic: "Optics", prereqs: ["Waves & Oscillations"], hours: 4, priority: 7 },
-        { topic: "Modern Physics", prereqs: ["Electrostatics"], hours: 4, priority: 9 },
+        { topic: "Current Electricity", prereqs: ["Electrostatics"], hours: 4, priority: 9 },
+        { topic: "Magnetic Effects of Current & Magnetism", prereqs: ["Current Electricity"], hours: 4, priority: 8 },
+        { topic: "Electromagnetic Induction & Alternating Currents", prereqs: ["Magnetic Effects of Current & Magnetism"], hours: 4, priority: 9 },
+        { topic: "Electromagnetic Waves", prereqs: ["Electromagnetic Induction & Alternating Currents"], hours: 2, priority: 6 },
+        { topic: "Optics", prereqs: ["Oscillations & Waves"], hours: 4, priority: 8 },
+        { topic: "Dual Nature of Matter & Radiation", prereqs: ["Electrostatics"], hours: 2, priority: 8 },
+        { topic: "Atoms & Nuclei", prereqs: ["Dual Nature of Matter & Radiation"], hours: 3, priority: 9 },
+        { topic: "Electronic Devices", prereqs: ["Atoms & Nuclei"], hours: 3, priority: 8 },
+        { topic: "Experimental Skills", prereqs: ["Physics & Measurement"], hours: 2, priority: 6 },
       ],
       "Chemistry": [
-        { topic: "Mole Concept", prereqs: [], hours: 3, priority: 9 },
-        { topic: "Atomic Structure", prereqs: ["Mole Concept"], hours: 3, priority: 8 },
-        { topic: "Chemical Bonding", prereqs: ["Atomic Structure"], hours: 4, priority: 8 },
-        { topic: "Thermodynamics", prereqs: ["Mole Concept"], hours: 4, priority: 8 },
-        { topic: "Equilibrium", prereqs: ["Thermodynamics"], hours: 4, priority: 8 },
-        { topic: "Electrochemistry", prereqs: ["Equilibrium"], hours: 3, priority: 7 },
-        { topic: "GOC", prereqs: ["Chemical Bonding"], hours: 5, priority: 9 },
-        { topic: "Hydrocarbons", prereqs: ["GOC"], hours: 4, priority: 8 },
-        { topic: "Organic Reactions", prereqs: ["Hydrocarbons"], hours: 5, priority: 9 },
-        { topic: "Coordination Chemistry", prereqs: ["Chemical Bonding"], hours: 3, priority: 7 },
+        { topic: "Some Basic Concepts in Chemistry", prereqs: [], hours: 3, priority: 8 },
+        { topic: "Atomic Structure", prereqs: ["Some Basic Concepts in Chemistry"], hours: 3, priority: 8 },
+        { topic: "Chemical Bonding & Molecular Structure", prereqs: ["Atomic Structure"], hours: 4, priority: 9 },
+        { topic: "Chemical Thermodynamics", prereqs: ["Some Basic Concepts in Chemistry"], hours: 4, priority: 8 },
+        { topic: "Solutions", prereqs: ["Some Basic Concepts in Chemistry"], hours: 3, priority: 7 },
+        { topic: "Equilibrium", prereqs: ["Chemical Thermodynamics"], hours: 4, priority: 8 },
+        { topic: "Redox Reactions & Electrochemistry", prereqs: ["Some Basic Concepts in Chemistry"], hours: 3, priority: 8 },
+        { topic: "Chemical Kinetics", prereqs: ["Chemical Thermodynamics"], hours: 3, priority: 8 },
+        { topic: "Classification of Elements & Periodicity", prereqs: ["Atomic Structure"], hours: 3, priority: 8 },
+        { topic: "s-Block Elements", prereqs: ["Classification of Elements & Periodicity"], hours: 2, priority: 6 },
+        { topic: "p-Block Elements", prereqs: ["Classification of Elements & Periodicity"], hours: 4, priority: 8 },
+        { topic: "d- & f-Block Elements", prereqs: ["Classification of Elements & Periodicity"], hours: 3, priority: 8 },
+        { topic: "Coordination Compounds", prereqs: ["Chemical Bonding & Molecular Structure"], hours: 4, priority: 9 },
+        { topic: "Basic Principles of Organic Chemistry", prereqs: ["Chemical Bonding & Molecular Structure"], hours: 5, priority: 9 },
+        { topic: "Hydrocarbons", prereqs: ["Basic Principles of Organic Chemistry"], hours: 4, priority: 8 },
+        { topic: "Organic Compounds Containing Halogens", prereqs: ["Hydrocarbons"], hours: 3, priority: 7 },
+        { topic: "Organic Compounds Containing Oxygen", prereqs: ["Hydrocarbons"], hours: 4, priority: 8 },
+        { topic: "Organic Compounds Containing Nitrogen", prereqs: ["Organic Compounds Containing Oxygen"], hours: 3, priority: 8 },
+        { topic: "Biomolecules", prereqs: ["Basic Principles of Organic Chemistry"], hours: 2, priority: 7 },
+        { topic: "Principles Related to Practical Chemistry", prereqs: ["Some Basic Concepts in Chemistry"], hours: 2, priority: 6 },
       ],
     };
   }
-  // NEET
+  // NEET (UG) — Botany & Zoology per the NTA subject split.
   return {
-    "Biology": [
-      { topic: "Cell Biology", prereqs: [], hours: 4, priority: 9 },
-      { topic: "Genetics & Heredity", prereqs: ["Cell Biology"], hours: 5, priority: 9 },
-      { topic: "Mendelian Genetics", prereqs: ["Genetics & Heredity"], hours: 4, priority: 9 },
-      { topic: "Molecular Biology", prereqs: ["Cell Biology"], hours: 4, priority: 8 },
-      { topic: "Human Physiology", prereqs: ["Cell Biology"], hours: 5, priority: 9 },
-      { topic: "Neural Coordination", prereqs: ["Human Physiology"], hours: 3, priority: 8 },
-      { topic: "Reproduction", prereqs: ["Cell Biology"], hours: 4, priority: 8 },
-      { topic: "Ecology", prereqs: [], hours: 3, priority: 7 },
-      { topic: "Evolution", prereqs: ["Genetics & Heredity"], hours: 3, priority: 7 },
-      { topic: "Plant Physiology", prereqs: ["Cell Biology"], hours: 4, priority: 7 },
-      { topic: "Biotechnology", prereqs: ["Molecular Biology"], hours: 3, priority: 7 },
-    ],
     "Physics": [
-      { topic: "Kinematics", prereqs: [], hours: 3, priority: 8 },
+      { topic: "Physical World & Measurement", prereqs: [], hours: 2, priority: 5 },
+      { topic: "Kinematics", prereqs: ["Physical World & Measurement"], hours: 3, priority: 7 },
       { topic: "Laws of Motion", prereqs: ["Kinematics"], hours: 3, priority: 8 },
-      { topic: "Work & Energy", prereqs: ["Laws of Motion"], hours: 2, priority: 7 },
-      { topic: "Electrostatics", prereqs: [], hours: 4, priority: 9 },
+      { topic: "Work, Energy & Power", prereqs: ["Laws of Motion"], hours: 2, priority: 7 },
+      { topic: "Rotational Motion", prereqs: ["Laws of Motion"], hours: 3, priority: 7 },
+      { topic: "Gravitation", prereqs: ["Laws of Motion"], hours: 2, priority: 6 },
+      { topic: "Properties of Solids & Liquids", prereqs: ["Laws of Motion"], hours: 2, priority: 6 },
+      { topic: "Thermodynamics", prereqs: ["Work, Energy & Power"], hours: 3, priority: 8 },
+      { topic: "Kinetic Theory of Gases", prereqs: ["Thermodynamics"], hours: 2, priority: 6 },
+      { topic: "Oscillations & Waves", prereqs: ["Laws of Motion"], hours: 3, priority: 7 },
+      { topic: "Electrostatics", prereqs: [], hours: 3, priority: 8 },
       { topic: "Current Electricity", prereqs: ["Electrostatics"], hours: 3, priority: 8 },
-      { topic: "Optics", prereqs: [], hours: 4, priority: 8 },
-      { topic: "Modern Physics", prereqs: ["Electrostatics"], hours: 3, priority: 8 },
+      { topic: "Magnetic Effects of Current & Magnetism", prereqs: ["Current Electricity"], hours: 3, priority: 7 },
+      { topic: "Electromagnetic Induction & Alternating Currents", prereqs: ["Magnetic Effects of Current & Magnetism"], hours: 3, priority: 7 },
+      { topic: "Electromagnetic Waves", prereqs: ["Electromagnetic Induction & Alternating Currents"], hours: 1, priority: 6 },
+      { topic: "Optics", prereqs: ["Oscillations & Waves"], hours: 3, priority: 8 },
+      { topic: "Dual Nature of Matter & Radiation", prereqs: ["Electrostatics"], hours: 2, priority: 8 },
+      { topic: "Atoms & Nuclei", prereqs: ["Dual Nature of Matter & Radiation"], hours: 2, priority: 8 },
+      { topic: "Electronic Devices", prereqs: ["Atoms & Nuclei"], hours: 2, priority: 8 },
     ],
     "Chemistry": [
-      { topic: "Mole Concept", prereqs: [], hours: 3, priority: 9 },
-      { topic: "Chemical Bonding", prereqs: ["Mole Concept"], hours: 3, priority: 8 },
-      { topic: "Thermodynamics", prereqs: ["Mole Concept"], hours: 3, priority: 7 },
-      { topic: "Equilibrium", prereqs: ["Thermodynamics"], hours: 3, priority: 8 },
-      { topic: "GOC", prereqs: ["Chemical Bonding"], hours: 4, priority: 9 },
-      { topic: "Biomolecules", prereqs: ["GOC"], hours: 2, priority: 7 },
-      { topic: "Polymers", prereqs: ["GOC"], hours: 2, priority: 6 },
+      { topic: "Some Basic Concepts in Chemistry", prereqs: [], hours: 3, priority: 8 },
+      { topic: "Atomic Structure", prereqs: ["Some Basic Concepts in Chemistry"], hours: 3, priority: 8 },
+      { topic: "Chemical Bonding & Molecular Structure", prereqs: ["Atomic Structure"], hours: 3, priority: 9 },
+      { topic: "Chemical Thermodynamics", prereqs: ["Some Basic Concepts in Chemistry"], hours: 3, priority: 7 },
+      { topic: "Solutions", prereqs: ["Some Basic Concepts in Chemistry"], hours: 2, priority: 7 },
+      { topic: "Equilibrium", prereqs: ["Chemical Thermodynamics"], hours: 3, priority: 8 },
+      { topic: "Redox Reactions & Electrochemistry", prereqs: ["Some Basic Concepts in Chemistry"], hours: 2, priority: 7 },
+      { topic: "Chemical Kinetics", prereqs: ["Chemical Thermodynamics"], hours: 2, priority: 7 },
+      { topic: "Classification of Elements & Periodicity", prereqs: ["Atomic Structure"], hours: 3, priority: 8 },
+      { topic: "p-Block Elements", prereqs: ["Classification of Elements & Periodicity"], hours: 3, priority: 8 },
+      { topic: "d- & f-Block Elements", prereqs: ["Classification of Elements & Periodicity"], hours: 2, priority: 7 },
+      { topic: "Coordination Compounds", prereqs: ["Chemical Bonding & Molecular Structure"], hours: 3, priority: 8 },
+      { topic: "Basic Principles of Organic Chemistry", prereqs: ["Chemical Bonding & Molecular Structure"], hours: 4, priority: 9 },
+      { topic: "Hydrocarbons", prereqs: ["Basic Principles of Organic Chemistry"], hours: 3, priority: 8 },
+      { topic: "Organic Compounds Containing Halogens", prereqs: ["Hydrocarbons"], hours: 2, priority: 7 },
+      { topic: "Organic Compounds Containing Oxygen", prereqs: ["Hydrocarbons"], hours: 3, priority: 8 },
+      { topic: "Organic Compounds Containing Nitrogen", prereqs: ["Organic Compounds Containing Oxygen"], hours: 2, priority: 8 },
+      { topic: "Biomolecules", prereqs: ["Basic Principles of Organic Chemistry"], hours: 2, priority: 8 },
+    ],
+    "Botany": [
+      { topic: "Diversity in the Living World", prereqs: [], hours: 4, priority: 9 },
+      { topic: "Structural Organisation in Plants", prereqs: ["Diversity in the Living World"], hours: 3, priority: 7 },
+      { topic: "Cell Structure & Function", prereqs: [], hours: 4, priority: 9 },
+      { topic: "Plant Physiology", prereqs: ["Cell Structure & Function"], hours: 5, priority: 9 },
+      { topic: "Sexual Reproduction in Flowering Plants", prereqs: ["Structural Organisation in Plants"], hours: 3, priority: 8 },
+      { topic: "Principles of Inheritance & Variation", prereqs: ["Cell Structure & Function"], hours: 5, priority: 10 },
+      { topic: "Molecular Basis of Inheritance", prereqs: ["Principles of Inheritance & Variation"], hours: 4, priority: 9 },
+    ],
+    "Zoology": [
+      { topic: "Structural Organisation in Animals", prereqs: [], hours: 3, priority: 7 },
+      { topic: "Human Physiology", prereqs: ["Structural Organisation in Animals"], hours: 6, priority: 10 },
+      { topic: "Human Reproduction & Reproductive Health", prereqs: ["Human Physiology"], hours: 4, priority: 9 },
+      { topic: "Evolution", prereqs: [], hours: 3, priority: 8 },
+      { topic: "Biology & Human Welfare", prereqs: ["Human Physiology"], hours: 3, priority: 8 },
+      { topic: "Biotechnology & Its Applications", prereqs: ["Molecular Basis of Inheritance"], hours: 3, priority: 9 },
+      { topic: "Ecology & Environment", prereqs: [], hours: 4, priority: 9 },
     ],
   };
 }
-
 // ─────────────────────────────────────────────────────────────────────────────
 // PHASE 1 — Learner Model
 // ─────────────────────────────────────────────────────────────────────────────

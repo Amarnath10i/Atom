@@ -53,14 +53,8 @@ function ChatView() {
   const { student, stored, thread } = Route.useLoaderData();
   const [language, setLanguage] = useState(student.language ?? "english");
 
-  // Persist the chosen model per browser so it survives reloads.
-  const [model, setModel] = useState<ModelName>(() => {
-    if (typeof window === "undefined") return "gemini";
-    return (localStorage.getItem("lama:model") as ModelName) || "gemini";
-  });
-  useEffect(() => {
-    if (typeof window !== "undefined") localStorage.setItem("lama:model", model);
-  }, [model]);
+  // Fixed to Gemini (model switcher removed from the UI).
+  const model: ModelName = "gemini";
 
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -259,7 +253,6 @@ function ChatView() {
             <Plus className="h-4 w-4" />
           </button>
           <span className="hidden text-[10px] text-muted-foreground select-none sm:inline">
-            {model === "gemini" ? "Gemini" : "Claude"} ·{" "}
             <kbd className="rounded border border-border px-1">Enter</kbd> send
           </span>
         </div>
@@ -294,29 +287,6 @@ function ChatView() {
         </div>
 
         <div className="flex items-center gap-2">
-          <div className="flex items-center rounded-md border border-border p-0.5 text-xs font-semibold">
-            <button
-              type="button"
-              onClick={() => setModel("gemini")}
-              className={`flex items-center gap-1 rounded px-2 py-1 transition ${
-                model === "gemini" ? "bg-primary text-primary-foreground" : "hover:bg-muted"
-              }`}
-              title="Use Google Gemini"
-            >
-              <Sparkles className="h-3 w-3" /> Gemini
-            </button>
-            <button
-              type="button"
-              onClick={() => setModel("claude")}
-              className={`flex items-center gap-1 rounded px-2 py-1 transition ${
-                model === "claude" ? "bg-primary text-primary-foreground" : "hover:bg-muted"
-              }`}
-              title="Use Anthropic Claude"
-            >
-              <Sparkles className="h-3 w-3" /> Claude
-            </button>
-          </div>
-
           <button
             onClick={() => setLanguage((l) => (l === "english" ? "hinglish" : "english"))}
             className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-semibold hover:bg-muted"

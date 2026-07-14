@@ -24,6 +24,8 @@ const SUBJECT_COLORS: Record<string, { fill: string; stroke: string; text: strin
   Physics:     { fill: "#1e3a2f", stroke: "#22c55e", text: "#86efac" },
   Chemistry:   { fill: "#3a1e2f", stroke: "#a855f7", text: "#d8b4fe" },
   Biology:     { fill: "#2f3a1e", stroke: "#84cc16", text: "#bef264" },
+  Botany:      { fill: "#213a1e", stroke: "#84cc16", text: "#bef264" },
+  Zoology:     { fill: "#3a2c1e", stroke: "#f59e0b", text: "#fcd34d" },
 };
 
 function masteryColor(m: number): string {
@@ -72,15 +74,16 @@ function CurriculumPage() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Node | null>(null);
   const [filter, setFilter] = useState<string>("All");
+  const [examView, setExamView] = useState<"JEE" | "NEET">("JEE");
   const [rootCause, setRootCause] = useState<any>(null);
   const [loadingRoot, setLoadingRoot] = useState(false);
   const svgRef = useRef<SVGSVGElement>(null);
 
-  const load = async () => {
+  const load = async (exam: "JEE" | "NEET") => {
     setLoading(true);
     setErr(null);
     try {
-      const d = await getCurriculumGraph();
+      const d = await getCurriculumGraph({ data: { exam } });
       if (d && d.nodes) {
         const laid = layoutNodes(d.nodes, d.edges);
         setData({ ...d, nodes: laid });
@@ -92,7 +95,7 @@ function CurriculumPage() {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(examView); }, [examView]);
 
   // Fetch root-cause chain whenever a node is selected.
   useEffect(() => {
@@ -142,6 +145,19 @@ function CurriculumPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <div className="mr-1 flex items-center rounded-full border border-border p-0.5 text-xs font-semibold">
+            {(["JEE", "NEET"] as const).map((ex) => (
+              <button
+                key={ex}
+                onClick={() => { if (ex !== examView) { setFilter("All"); setSelected(null); setExamView(ex); } }}
+                className={`rounded-full px-3 py-1 transition ${
+                  examView === ex ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {ex}
+              </button>
+            ))}
+          </div>
           {subjects.map((s) => (
             <button
               key={s}
@@ -156,7 +172,7 @@ function CurriculumPage() {
             </button>
           ))}
           <button
-            onClick={load}
+            onClick={() => load(examView)}
             className="rounded-full border border-border p-1.5 text-muted-foreground hover:text-foreground transition"
             title="Refresh"
           >

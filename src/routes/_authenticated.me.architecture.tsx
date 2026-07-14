@@ -33,9 +33,6 @@ function MyArchitecture() {
   const navigate = useNavigate();
   const [data, setData] = useState<Awaited<ReturnType<typeof getMyArchitecture>> | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [chatOpen, setChatOpen] = useState(false);
-  const [chatReady, setChatReady] = useState(false);
-  const [chatIds, setChatIds] = useState<{ studentId: string; threadId: string } | null>(null);
   const [graphFullscreen, setGraphFullscreen] = useState(false);
 
   useEffect(() => {
@@ -44,37 +41,7 @@ function MyArchitecture() {
       .catch((e) => setErr(e instanceof Error ? e.message : "Failed to load"));
   }, []);
 
-  // Auto-open chat for brand new users (no atoms yet)
-  useEffect(() => {
-    if (data && data.student && data.atoms.length === 0) {
-      setChatOpen(true);
-    }
-  }, [data]);
-
-  const openChat = async () => {
-    if (chatIds) { setChatOpen(true); return; }
-    try {
-      const me = await getMe();
-      if (!me.student) return;
-      const thread = await createThread({ data: { studentId: me.student.id } });
-      setChatIds({ studentId: me.student.id, threadId: thread.id });
-      setChatReady(true);
-      setChatOpen(true);
-    } catch (e) {
-      console.error("Failed to create thread", e);
-    }
-  };
-
-  // After chatIds are set, mark ready
-  useEffect(() => {
-    if (chatIds) setChatReady(true);
-  }, [chatIds]);
-
-  // Refresh architecture after chat closes (new atoms may have been created)
-  const handleChatClose = () => {
-    setChatOpen(false);
-    getMyArchitecture().then(setData).catch(() => {});
-  };
+  const goToChat = () => navigate({ to: "/chat" });
 
   if (err) return <div className="p-10 text-destructive">{err}</div>;
   if (!data) return <div className="p-10 text-muted-foreground">Loading your architecture…</div>;
@@ -114,7 +81,7 @@ function MyArchitecture() {
           </p>
         </div>
         <button
-          onClick={openChat}
+          onClick={goToChat}
           className="inline-flex items-center gap-2 rounded-md bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 transition"
         >
           <MessageSquare className="h-4 w-4" />
@@ -129,32 +96,6 @@ function MyArchitecture() {
             <Atom className="h-8 w-8" />
           </div>
           <h2 className="text-xl font-bold">Your memory graph is empty</h2>
-          <p className="mt-2 text-sm text-muted-foreground max-w-md mx-auto">
-            Chat with LAMA below to start building your molecular memory. Every concept you learn
-            becomes an atom. Every connection becomes a bond. Your graph grows with every session.
-          </p>
-          <div className="mt-5 flex flex-wrap justify-center gap-2">
-            {(s.exam === "JEE"
-              ? [
-                  "I'm scoring 30% on Rotational Motion — help me fix it",
-                  "Give me a JEE-Advanced problem on definite integrals",
-                  "Plan my next 4 weeks on organic chemistry",
-                ]
-              : [
-                  "Quiz me on Mendelian genetics with NEET questions",
-                  "Explain neural coordination — CNS vs PNS",
-                  "Build a 6-week plan to push Biology above 90%",
-                ]
-            ).map((p) => (
-              <button
-                key={p}
-                onClick={() => { openChat(); }}
-                className="rounded-xl border border-primary/30 bg-background px-3 py-2 text-xs hover:border-primary/60 hover:bg-primary/5 transition"
-              >
-                {p}
-              </button>
-            ))}
-          </div>
         </div>
       )}
 
@@ -237,15 +178,6 @@ function MyArchitecture() {
         </div>
       </section>
 
-      {/* Floating chat panel */}
-      {chatOpen && (
-        <ChatPanel
-          student={s}
-          chatIds={chatIds}
-          setChatIds={setChatIds}
-          onClose={handleChatClose}
-        />
-      )}
     </div>
   );
 }
