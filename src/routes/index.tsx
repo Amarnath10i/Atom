@@ -30,9 +30,6 @@ function Landing() {
           <span className="mt-3 block font-semibold text-foreground">The AI tutor</span>
           <span className="block font-light text-muted-foreground">that never forgets.</span>
         </h1>
-        <p className="mx-auto mt-6 max-w-xl text-lg text-muted-foreground">
-          A minimal, elegant multi-agent AI tutor with persistent memory and adaptive 6-month plans for JEE &amp; NEET.
-        </p>
         <div className="mt-8 flex flex-wrap justify-center gap-3">
           <Link to="/auth" className="rounded-full bg-primary px-6 py-3 text-sm font-medium text-primary-foreground transition hover:opacity-90">
             Sign in

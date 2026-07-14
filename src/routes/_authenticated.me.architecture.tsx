@@ -7,7 +7,7 @@ import { MemoryGraph } from "@/components/MemoryGraph";
 import { AtomStateBadge } from "@/components/AtomStateBadge";
 import ReactMarkdown from "react-markdown";
 import {
-  Brain, AlertTriangle, Sparkles, ArrowRight, ArrowUp,
+  Brain, Atom, AlertTriangle, Sparkles, ArrowRight, ArrowUp,
   MessageSquare, Compass, FlaskConical, Workflow, X, Maximize2, Minimize2
 } from "lucide-react";
 
@@ -126,7 +126,7 @@ function MyArchitecture() {
       {isEmpty && (
         <div className="mb-8 rounded-2xl border-2 border-dashed border-primary/30 bg-primary/5 p-8 text-center">
           <div className="mx-auto mb-3 grid h-16 w-16 place-items-center rounded-2xl bg-primary/15 text-primary">
-            <Brain className="h-8 w-8" />
+            <Atom className="h-8 w-8" />
           </div>
           <h2 className="text-xl font-bold">Your memory graph is empty</h2>
           <p className="mt-2 text-sm text-muted-foreground max-w-md mx-auto">

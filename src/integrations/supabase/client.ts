@@ -20,8 +20,11 @@ function createSupabaseClient() {
 
   return createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
     auth: {
-      storage: typeof window !== 'undefined' ? localStorage : undefined,
-      persistSession: true,
+      // Keep the session in memory only (not localStorage): a fresh visit or
+      // reload has no stored session, so the user signs in every time. The
+      // in-memory session still authorises serverFn RPCs while the tab is open.
+      storage: undefined,
+      persistSession: false,
       autoRefreshToken: true,
     }
   });

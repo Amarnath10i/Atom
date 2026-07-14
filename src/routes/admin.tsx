@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { adminLogin, adminOverview } from "@/lib/admin.functions";
 import { TopBar } from "@/components/TopBar";
-import { Shield, Users, MessageSquare, Brain, AlertTriangle, ListChecks, LogOut, Activity } from "lucide-react";
+import { Shield, Users, MessageSquare, Atom, AlertTriangle, ListChecks, LogOut, Activity } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/admin")({
@@ -146,7 +146,7 @@ function AdminPage() {
               <Kpi icon={Users} label="Students" value={t?.students ?? 0} />
               <Kpi icon={MessageSquare} label="Sessions" value={t?.threads ?? 0} />
               <Kpi icon={Activity} label="Messages (last 500)" value={t?.messages ?? 0} />
-              <Kpi icon={Brain} label="Memory atoms" value={t?.atoms ?? 0} />
+              <Kpi icon={Atom} label="Memory atoms" value={t?.atoms ?? 0} />
               <Kpi icon={AlertTriangle} label="Weak topics flagged" value={t?.weakTopics ?? 0} />
               <Kpi icon={ListChecks} label="Plan items" value={t?.planItems ?? 0} />
             </div>

@@ -59,18 +59,26 @@ function AuthPage() {
 
         if (error) throw error;
 
+        // Log the user straight in on account creation. signUp only returns a
+        // session when email confirmation is disabled; when it doesn't, sign in
+        // immediately with the same credentials so creating an account also
+        // logs you in. If the project still requires email confirmation, that
+        // sign-in fails and we fall back to the "check your email" flow.
         if (!data.session) {
-          // Email confirmation required — user must verify before we can create student row
-          toast.info(
-            "Check your email and click the confirmation link, then sign in here.",
-            { duration: 8000 }
-          );
-          setMode("signin");
-          setPassword("");
-          return;
+          const { data: signInData, error: signInErr } =
+            await supabase.auth.signInWithPassword({ email, password });
+          if (signInErr || !signInData.session) {
+            toast.info(
+              "Check your email and click the confirmation link, then sign in here.",
+              { duration: 8000 }
+            );
+            setMode("signin");
+            setPassword("");
+            return;
+          }
         }
 
-        // Session exists (email confirmation disabled) — create the student row
+        // Session established — create the student row
         try {
           await upsertMyStudent({
             data: {
