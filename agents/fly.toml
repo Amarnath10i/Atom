@@ -1,0 +1,18 @@
+# fly.toml — Fly.io configuration for LAMA Agents (FastAPI)
+
+app = "lama-agents"
+primary_region = "sin"  # Singapore — closest to India
+
+[build]
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  memory = "256mb"
+  cpu_kind = "shared"
+  cpus = 1
