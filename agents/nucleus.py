@@ -4,7 +4,7 @@ User message → nucleus_text → 384-d embedding → cosine search →
 shells of related atoms → bonds at sim >= BOND_MIN_SIM → semantic_mass,
 recency, gravity computed and persisted.
 
-This module is pure-Python (numpy) — no FAISS required, fits hackathon scope.
+This module is pure-Python (numpy) — no FAISS required.
 Bonds are persisted by the caller (TypeScript layer) using the returned plan."""
 from __future__ import annotations
 import math

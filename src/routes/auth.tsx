@@ -57,7 +57,29 @@ function AuthPage() {
           },
         });
 
-        if (error) throw error;
+        if (error) {
+          const m = error.message.toLowerCase();
+          if (
+            m.includes("already registered") ||
+            m.includes("already exists") ||
+            m.includes("user already")
+          ) {
+            toast.error("An account with this email already exists. Please sign in.");
+            setMode("signin");
+            setPassword("");
+            return;
+          }
+          throw error;
+        }
+
+        // Supabase hides duplicate emails (when confirmations are on) by
+        // returning a user with an empty identities array instead of an error.
+        if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+          toast.error("An account with this email already exists. Please sign in.");
+          setMode("signin");
+          setPassword("");
+          return;
+        }
 
         // Log the user straight in on account creation. signUp only returns a
         // session when email confirmation is disabled; when it doesn't, sign in

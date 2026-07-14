@@ -1,5 +1,5 @@
 # LAMA — Layered Atomic Memory Architecture
-### Multi-Agent JEE / NEET Tutor · NVIDIA India Agentic AI Hackathon
+### Multi-Agent JEE / NEET Tutor
 
 > Five specialist AI agents over a persistent molecular memory graph.  
 > Gemini or Claude. Zero hardcoded keys. Runs in VS Code in 5 minutes.
@@ -64,7 +64,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 ```powershell
 node scripts/setup-db.js
 ```
-This runs the full schema + seeds 10 students directly into your Supabase project.
+This runs the full database schema directly on your Supabase project.
 
 **Option B — Manual (if Option A fails):**
 1. Open [supabase.com/dashboard](https://supabase.com/dashboard) → your project
@@ -81,7 +81,7 @@ This runs the full schema + seeds 10 students directly into your Supabase projec
 npm run dev
 ```
 
-Open **http://localhost:3000** — you'll see the 10-student cohort landing page.
+Open **http://localhost:3000** — you'll see the landing page. Create an account at `/auth` to get started.
 
 ---
 
@@ -89,7 +89,7 @@ Open **http://localhost:3000** — you'll see the 10-student cohort landing page
 
 ```
 Browser (React + TanStack Router)
-  /                              Landing — 10-student cohort
+  /                              Landing page
   /student/:id                   Dashboard — LAMA memory graph + heatmap + plan
   /student/:id/chat/:threadId    Chat — live 5-agent streaming loop
 
@@ -148,16 +148,7 @@ No code changes needed — just edit `.env` and restart `npm run dev`.
 
 ---
 
-## 🇮🇳 NVIDIA India Agentic AI Hackathon Checklist
-
-| Criterion | Implementation |
-|-----------|----------------|
-| ✅ Agentic workflow | 5-agent tool-use loop (Vercel AI SDK `streamText`) |
-| ✅ Persistent memory | LAMA molecular graph — atoms + bonds survive across sessions |
-| ✅ Safety guardrails | Built-in regex NemoGuard-style pass; extend to real NeMo easily |
-| ✅ India context | Hinglish mode, NCERT alignment, JEE/NEET patterns |
-| ✅ NVIDIA alignment | Replace `GEMINI_API_KEY` with NVIDIA NIM endpoint — see below |
-| ✅ No hardcoded keys | 100% env-driven — `.env` never committed |
+## Using NVIDIA NIM (optional)
 
 **Swap to NVIDIA Nemotron (2-line change in `ai-gateway.server.ts`):**
 ```typescript
@@ -177,7 +168,7 @@ Then add `NVIDIA_API_KEY=nvapi-...` to `.env`.
 ```
 .env.example                          ← copy → .env, fill in keys
 scripts/setup-db.js                   ← node scripts/setup-db.js
-supabase/migrations/*.sql             ← full schema + 10-student seed
+supabase/migrations/*.sql             ← full database schema
 
 src/lib/ai-gateway.server.ts          ← Gemini / Claude / Nemotron switcher
 src/lib/config.server.ts              ← env var helpers + validation
@@ -199,7 +190,7 @@ src/routes/student.$studentId.chat.$threadId.tsx  ← chat UI
 
 ## 👤 Real Users (Auth) — added in v5.1
 
-LAMA now supports **real user sign-up** alongside the demo cohort.
+LAMA supports **real user sign-up**.
 
 ### What you get
 - `/auth` — email + password sign-up / sign-in page
