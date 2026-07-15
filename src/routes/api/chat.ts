@@ -156,10 +156,45 @@ export const Route = createFileRoute("/api/chat")({
           const { data: priorAtoms } = await supabaseAdmin.from("memory_atoms")
             .select("id,nucleus_vector").eq("student_id", studentId).limit(100);
           agents.nucleusIngest(lastText, priorAtoms ?? []).catch(() => {});
+
+          // ── Meta-Cognitive RL Evaluation Loop ────────────────────────────────
+          try {
+            const { data: pendingPreds } = await supabaseAdmin
+              .from("pattern_predictions")
+              .select("*")
+              .eq("student_id", studentId)
+              .eq("status", "pending");
+
+            if (pendingPreds && pendingPreds.length > 0) {
+              for (const p of pendingPreds) {
+                const evalRes = await agents.metaCognitiveEvaluate(lastText, p.predicted_intent);
+                const status = evalRes?.status ?? "ignored";
+                
+                await supabaseAdmin.from("pattern_predictions").update({
+                  status,
+                  resolved_at: new Date().toISOString()
+                } as never).eq("id", p.id);
+
+                if (p.related_pattern_id && (status === "correct" || status === "incorrect")) {
+                  const { data: pat } = await supabaseAdmin.from("pattern_atoms").select("confidence").eq("id", p.related_pattern_id).single();
+                  if (pat) {
+                    const delta = status === "correct" ? 0.1 : -0.05;
+                    const newConf = Math.max(0, Math.min(1.0, pat.confidence + delta));
+                    await supabaseAdmin.from("pattern_atoms").update({
+                      confidence: newConf,
+                      last_updated: new Date().toISOString()
+                    } as never).eq("id", p.related_pattern_id);
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            console.warn("[chat] Meta-Cognitive eval failed", e);
+          }
         }
 
         // ── Agent 1: Curator — load memory context ──────────────────────────
-        const [{ data: student }, { data: atoms }, { data: weak }, { data: plan }] =
+        const [{ data: student }, { data: atoms }, { data: weak }, { data: plan }, { data: patterns }] =
           await Promise.all([
             supabaseAdmin
               .from("students")
@@ -184,6 +219,13 @@ export const Route = createFileRoute("/api/chat")({
               .eq("status", "pending")
               .order("week")
               .limit(3),
+            supabaseAdmin
+              .from("pattern_atoms")
+              .select("*")
+              .eq("student_id", studentId)
+              .gt("confidence", 0.6)
+              .order("confidence", { ascending: false })
+              .limit(5),
           ]);
 
         const lang = body.language ?? student?.language ?? "english";
@@ -258,6 +300,13 @@ ${
   (weak ?? [])
     .map((w) => `- ${w.subject}/${w.topic} severity=${w.severity.toFixed(2)}: ${w.evidence ?? ""}`)
     .join("\n") || "(none detected yet)"
+}
+
+META-COGNITIVE PROFILE (Thinking Patterns)
+${
+  (patterns ?? [])
+    .map((p) => `- ${p.pattern_type} (conf: ${(p.confidence * 100).toFixed(0)}%): ${p.description}`)
+    .join("\n") || "(no strong patterns detected yet)"
 }
 
 UPCOMING STUDY PLAN (Planner Agent)
@@ -696,6 +745,52 @@ Do NOT create atoms for non-academic topics like greetings, AI capabilities, or 
                  // Actually curator returns merges, prunes, bonds. We can apply them here if we want,
                  // but let's keep it simple and assume the curator endpoint is fire-and-forget or we don't apply it yet
                  // as the original curator endpoint returned instructions.
+              }
+
+              // 4. Meta-Cognitive Prediction (Background)
+              try {
+                const [{ data: msgsForPred }, { data: currentPatterns }] = await Promise.all([
+                  supabaseAdmin.from("messages").select("role,content").eq("thread_id", threadId).order("created_at", { ascending: false }).limit(10),
+                  supabaseAdmin.from("pattern_atoms").select("*").eq("student_id", studentId)
+                ]);
+                
+                // Reverse to get chronological order
+                const chronoMsgs = (msgsForPred ?? []).reverse();
+                
+                const predRes = await agents.metaCognitivePredict(chronoMsgs, currentPatterns ?? []);
+                if (predRes?.prediction && predRes.prediction.predicted_intent) {
+                  const pred = predRes.prediction;
+                  let relatedPatternId = null;
+                  
+                  if (pred.related_pattern_type) {
+                    const { data: exPat } = await supabaseAdmin.from("pattern_atoms")
+                      .select("id").eq("student_id", studentId).eq("pattern_type", pred.related_pattern_type).maybeSingle();
+                    
+                    if (exPat) {
+                      relatedPatternId = exPat.id;
+                    } else {
+                      // Create new pattern
+                      const { data: newPat } = await supabaseAdmin.from("pattern_atoms").insert({
+                        student_id: studentId,
+                        pattern_type: pred.related_pattern_type,
+                        description: pred.predicted_intent,
+                        confidence: 0.5,
+                        success_rate: 0.5
+                      } as never).select("id").single();
+                      if (newPat) relatedPatternId = newPat.id;
+                    }
+                  }
+                  
+                  await supabaseAdmin.from("pattern_predictions").insert({
+                    student_id: studentId,
+                    thread_id: threadId,
+                    predicted_intent: pred.predicted_intent,
+                    related_pattern_id: relatedPatternId,
+                    status: "pending"
+                  } as never);
+                }
+              } catch (e) {
+                console.warn("[chat] Meta-Cognitive predict failed", e);
               }
 
             } catch (e) {

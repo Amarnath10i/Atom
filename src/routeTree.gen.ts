@@ -22,6 +22,7 @@ import { Route as AuthenticatedMeSimulatorRouteImport } from './routes/_authenti
 import { Route as AuthenticatedMeRoadmapRouteImport } from './routes/_authenticated.me.roadmap'
 import { Route as AuthenticatedMeProgressRouteImport } from './routes/_authenticated.me.progress'
 import { Route as AuthenticatedMeMockTestsRouteImport } from './routes/_authenticated.me.mock-tests'
+import { Route as AuthenticatedMeMetaCognitiveRouteImport } from './routes/_authenticated.me.meta-cognitive'
 import { Route as AuthenticatedMeLearnerRouteImport } from './routes/_authenticated.me.learner'
 import { Route as AuthenticatedMeExamStrategyRouteImport } from './routes/_authenticated.me.exam-strategy'
 import { Route as AuthenticatedMeCurriculumRouteImport } from './routes/_authenticated.me.curriculum'
@@ -97,6 +98,12 @@ const AuthenticatedMeMockTestsRoute =
     path: '/me/mock-tests',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
+const AuthenticatedMeMetaCognitiveRoute =
+  AuthenticatedMeMetaCognitiveRouteImport.update({
+    id: '/me/meta-cognitive',
+    path: '/me/meta-cognitive',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
 const AuthenticatedMeLearnerRoute = AuthenticatedMeLearnerRouteImport.update({
   id: '/me/learner',
   path: '/me/learner',
@@ -158,6 +165,7 @@ export interface FileRoutesByFullPath {
   '/me/curriculum': typeof AuthenticatedMeCurriculumRoute
   '/me/exam-strategy': typeof AuthenticatedMeExamStrategyRoute
   '/me/learner': typeof AuthenticatedMeLearnerRoute
+  '/me/meta-cognitive': typeof AuthenticatedMeMetaCognitiveRoute
   '/me/mock-tests': typeof AuthenticatedMeMockTestsRoute
   '/me/progress': typeof AuthenticatedMeProgressRoute
   '/me/roadmap': typeof AuthenticatedMeRoadmapRoute
@@ -180,6 +188,7 @@ export interface FileRoutesByTo {
   '/me/curriculum': typeof AuthenticatedMeCurriculumRoute
   '/me/exam-strategy': typeof AuthenticatedMeExamStrategyRoute
   '/me/learner': typeof AuthenticatedMeLearnerRoute
+  '/me/meta-cognitive': typeof AuthenticatedMeMetaCognitiveRoute
   '/me/mock-tests': typeof AuthenticatedMeMockTestsRoute
   '/me/progress': typeof AuthenticatedMeProgressRoute
   '/me/roadmap': typeof AuthenticatedMeRoadmapRoute
@@ -204,6 +213,7 @@ export interface FileRoutesById {
   '/_authenticated/me/curriculum': typeof AuthenticatedMeCurriculumRoute
   '/_authenticated/me/exam-strategy': typeof AuthenticatedMeExamStrategyRoute
   '/_authenticated/me/learner': typeof AuthenticatedMeLearnerRoute
+  '/_authenticated/me/meta-cognitive': typeof AuthenticatedMeMetaCognitiveRoute
   '/_authenticated/me/mock-tests': typeof AuthenticatedMeMockTestsRoute
   '/_authenticated/me/progress': typeof AuthenticatedMeProgressRoute
   '/_authenticated/me/roadmap': typeof AuthenticatedMeRoadmapRoute
@@ -228,6 +238,7 @@ export interface FileRouteTypes {
     | '/me/curriculum'
     | '/me/exam-strategy'
     | '/me/learner'
+    | '/me/meta-cognitive'
     | '/me/mock-tests'
     | '/me/progress'
     | '/me/roadmap'
@@ -250,6 +261,7 @@ export interface FileRouteTypes {
     | '/me/curriculum'
     | '/me/exam-strategy'
     | '/me/learner'
+    | '/me/meta-cognitive'
     | '/me/mock-tests'
     | '/me/progress'
     | '/me/roadmap'
@@ -273,6 +285,7 @@ export interface FileRouteTypes {
     | '/_authenticated/me/curriculum'
     | '/_authenticated/me/exam-strategy'
     | '/_authenticated/me/learner'
+    | '/_authenticated/me/meta-cognitive'
     | '/_authenticated/me/mock-tests'
     | '/_authenticated/me/progress'
     | '/_authenticated/me/roadmap'
@@ -385,6 +398,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedMeMockTestsRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/me/meta-cognitive': {
+      id: '/_authenticated/me/meta-cognitive'
+      path: '/me/meta-cognitive'
+      fullPath: '/me/meta-cognitive'
+      preLoaderRoute: typeof AuthenticatedMeMetaCognitiveRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/_authenticated/me/learner': {
       id: '/_authenticated/me/learner'
       path: '/me/learner'
@@ -452,6 +472,7 @@ interface AuthenticatedRouteChildren {
   AuthenticatedMeCurriculumRoute: typeof AuthenticatedMeCurriculumRoute
   AuthenticatedMeExamStrategyRoute: typeof AuthenticatedMeExamStrategyRoute
   AuthenticatedMeLearnerRoute: typeof AuthenticatedMeLearnerRoute
+  AuthenticatedMeMetaCognitiveRoute: typeof AuthenticatedMeMetaCognitiveRoute
   AuthenticatedMeMockTestsRoute: typeof AuthenticatedMeMockTestsRoute
   AuthenticatedMeProgressRoute: typeof AuthenticatedMeProgressRoute
   AuthenticatedMeRoadmapRoute: typeof AuthenticatedMeRoadmapRoute
@@ -468,6 +489,7 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedMeCurriculumRoute: AuthenticatedMeCurriculumRoute,
   AuthenticatedMeExamStrategyRoute: AuthenticatedMeExamStrategyRoute,
   AuthenticatedMeLearnerRoute: AuthenticatedMeLearnerRoute,
+  AuthenticatedMeMetaCognitiveRoute: AuthenticatedMeMetaCognitiveRoute,
   AuthenticatedMeMockTestsRoute: AuthenticatedMeMockTestsRoute,
   AuthenticatedMeProgressRoute: AuthenticatedMeProgressRoute,
   AuthenticatedMeRoadmapRoute: AuthenticatedMeRoadmapRoute,

@@ -49,6 +49,7 @@ const PHASE_SECTIONS = [
       { to: "/me/curriculum", icon: GitBranch,   label: "Curriculum" },
       { to: "/me/progress",   icon: TrendingDown, label: "Forgetting Curves" },
       { to: "/me/learner",    icon: Brain,        label: "Learner Model" },
+      { to: "/me/meta-cognitive", icon: Brain,    label: "Meta-Cognitive" },
     ],
   },
 ] as const;

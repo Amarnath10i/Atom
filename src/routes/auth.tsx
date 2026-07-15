@@ -162,6 +162,8 @@ function AuthPage() {
     }
   }
 
+
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-background px-6 py-12">
       <div className="w-full max-w-md">
@@ -308,6 +310,8 @@ function AuthPage() {
               )}
             </button>
           </form>
+
+
 
           <p className="mt-4 text-center text-xs text-muted-foreground">
             By continuing you agree to our terms.{" "}

@@ -112,3 +112,24 @@ export const getMyArchitecture = createServerFn({ method: "GET" })
       reflections: refl.data ?? [],
     };
   });
+
+/** Fetch meta-cognitive pattern graph data. */
+export const getMyMetaCognitive = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const uid = context.userId;
+    const { data: student } = await supabaseAdmin.from("students").select("id").eq("auth_user_id", uid).maybeSingle();
+    if (!student) throw new Error("No student profile found");
+
+    const [patternsRes, predictionsRes] = await Promise.all([
+      supabaseAdmin.from("pattern_atoms").select("*").eq("student_id", student.id).order("confidence", { ascending: false }),
+      supabaseAdmin.from("pattern_predictions").select("*").eq("student_id", student.id).order("created_at", { ascending: false }).limit(50),
+    ]);
+
+    return {
+      student,
+      patterns: patternsRes.data ?? [],
+      predictions: predictionsRes.data ?? [],
+    };
+  });

@@ -25,7 +25,7 @@ load_dotenv()  # pull .env from cwd (project root when run from there)
 # Also try parent dir in case launched from agents/
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
-from . import guard, curator, diagnostic, planner, state_inference, nucleus, llm, question_gen
+from . import guard, curator, diagnostic, planner, state_inference, nucleus, llm, question_gen, meta_cognitive
 
 app = FastAPI(title="LAMA Agents", version="1.0.0")
 app.add_middleware(
@@ -75,6 +75,27 @@ class PlanIn(BaseModel):
     exam: str
     weak: list[dict]
     current_plan: list[dict] = []
+
+@app.post("/question-gen")
+def qgen_ep(body: QGenIn):
+    return question_gen.generate(body.subject, body.topics, body.difficulty, count=body.count)
+
+class MetaCognitivePredictIn(BaseModel):
+    transcript: list[dict]
+    patterns: list[dict]
+
+@app.post("/meta-cognitive/predict")
+def meta_predict_ep(body: MetaCognitivePredictIn):
+    return meta_cognitive.predict(body.transcript, body.patterns)
+
+class MetaCognitiveEvaluateIn(BaseModel):
+    actual_message: str
+    predicted_intent: str
+
+@app.post("/meta-cognitive/evaluate")
+def meta_evaluate_ep(body: MetaCognitiveEvaluateIn):
+    return meta_cognitive.evaluate(body.actual_message, body.predicted_intent)
+
 
 @app.post("/planner")
 def planner_ep(body: PlanIn):

@@ -62,4 +62,8 @@ export const agents = {
     post("/nucleus/decay", { atoms }, { updates: [] }),
   generateQuestions: (subject: string, topics: string[], difficulty_range: number[], count = 3, exclude_ids?: string[]) =>
     post("/generate-questions", { subject, topics, difficulty_range, count, exclude_ids }, { questions: [] }),
+  metaCognitivePredict: (transcript: unknown[], patterns: unknown[]) =>
+    post("/meta-cognitive/predict", { transcript, patterns }, { prediction: null }),
+  metaCognitiveEvaluate: (actual_message: string, predicted_intent: string) =>
+    post("/meta-cognitive/evaluate", { actual_message, predicted_intent }, { status: "ignored" }),
 };
