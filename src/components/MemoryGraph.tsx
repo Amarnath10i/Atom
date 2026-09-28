@@ -1,6 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
-import { BANDS, PREFERENCES, RELATION_LABEL, bandFor } from "@/lib/memory-map";
+import {
+  BANDS,
+  RELATION_LABEL,
+  bandFor,
+  effectiveStrength,
+  examPriorities,
+  isFading,
+  learnedPreferences,
+  recall,
+} from "@/lib/memory-map";
+import { topicWeightage } from "@/lib/exam-weightage";
 
 /**
  * Student-centred memory map.
@@ -12,6 +22,10 @@ import { BANDS, PREFERENCES, RELATION_LABEL, bandFor } from "@/lib/memory-map";
  *  - Bonds between topics are drawn as curves coloured by relation, and cross
  *    subject boundaries when topics from different subjects connect.
  *  - Node size = how often the topic has been reviewed.
+ *  - Mastery decays with time since review (forgetting curve), so topics that
+ *    aren't revisited drift outward; fading ones get a dashed outline.
+ *  - Gold rotating ring = highest-yield gap (exam weightage × gap).
+ *  - Red satellites = active misconceptions on that topic.
  */
 
 type Atom = {
@@ -24,10 +38,13 @@ type Atom = {
   state?: string | null;
   last_reviewed?: string | null;
   sm2_next_review_date?: string | null;
+  sm2_interval?: number | null;
+  exam_unit?: string | null;
 };
 type Bond = { id?: string; source_atom: string; target_atom: string; relation?: string | null; weight?: number | null };
 type Weak = { subject: string; topic: string; severity: number };
 type Pattern = { pattern_type: string; description?: string | null; confidence: number };
+type Misconception = { subject: string; topic: string; pattern: string; description?: string | null; occurrences?: number | null };
 
 const SUBJECT_COLOR: Record<string, string> = {
   physics: "#4cc9f0", chemistry: "#b388ff", maths: "#f4a261", biology: "#57d9a3",
@@ -48,11 +65,14 @@ const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
 
 export function MemoryGraph({
-  atoms,
+  atoms: rawAtoms,
   bonds,
   studentName = "You",
   weakTopics = [],
   patterns = [],
+  misconceptions = [],
+  exam = "JEE",
+  memoryStability = 1,
   className,
 }: {
   atoms: Atom[];
@@ -60,8 +80,16 @@ export function MemoryGraph({
   studentName?: string;
   weakTopics?: Weak[];
   patterns?: Pattern[];
+  misconceptions?: Misconception[];
+  exam?: string;
+  /** The student's learned forgetting speed (students.memory_stability). */
+  memoryStability?: number;
   className?: string;
 }) {
+  const atoms = useMemo(
+    () => rawAtoms.map((a) => ({ ...a, stability_mul: memoryStability })),
+    [rawAtoms, memoryStability],
+  );
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -89,12 +117,29 @@ export function MemoryGraph({
   }, []);
 
   const learnerPrefs = useMemo(
-    () =>
-      patterns.flatMap((p) => {
-        const def = PREFERENCES.find((d) => d.type === p.pattern_type);
-        return def && p.confidence >= 0.6 ? [{ type: def.type, label: def.label, confidence: p.confidence }] : [];
-      }),
+    () => learnedPreferences(patterns).map((p) => ({ type: p.key, label: p.label, instruction: p.instruction, confidence: p.confidence })),
     [patterns],
+  );
+
+  const misByTopic = useMemo(() => {
+    const m = new Map<string, Misconception[]>();
+    misconceptions.forEach((x) => {
+      const k = norm(x.topic);
+      if (!m.has(k)) m.set(k, []);
+      m.get(k)!.push(x);
+    });
+    return m;
+  }, [misconceptions]);
+
+  const highYieldIds = useMemo(
+    () =>
+      new Set(
+        examPriorities(atoms, (a) => topicWeightage(exam, titleCase(a.subject), a.exam_unit))
+          .filter((p) => effectiveStrength(p.atom) < 0.7)
+          .slice(0, 3)
+          .map((p) => p.atom.id),
+      ),
+    [atoms, exam],
   );
 
   const weakSet = useMemo(
@@ -135,7 +180,8 @@ export function MemoryGraph({
     // ── Data ────────────────────────────────────────────────────────────────
     type N = Atom & {
       key: string; x: number; y: number; r: number; tx: number; ty: number;
-      targetR: number; weak: boolean; fx?: number | null; fy?: number | null;
+      targetR: number; weak: boolean; eff: number; fading: boolean; highYield: boolean; mis: number;
+      fx?: number | null; fy?: number | null;
     };
     const nodes: N[] = atoms.map((a) => {
       const strength = typeof a.strength === "number" ? Math.max(0, Math.min(1, a.strength)) : 0.5;
@@ -147,7 +193,11 @@ export function MemoryGraph({
         key: (a.subject || "general").toLowerCase(),
         x: 0, y: 0, tx: 0, ty: 0,
         r: 8 + Math.min(10, Math.sqrt(reviews) * 2.4),
-        targetR: radiusFor(strength),
+        eff: effectiveStrength({ ...a, strength }),
+        targetR: radiusFor(effectiveStrength({ ...a, strength })),
+        fading: isFading({ ...a, strength }),
+        highYield: highYieldIds.has(a.id),
+        mis: misByTopic.get(norm(a.topic))?.length ?? 0,
         weak: weakSet.has(norm(a.topic)) || a.state === "stuck",
       };
     });
@@ -236,8 +286,8 @@ export function MemoryGraph({
     // ── Gravity lines: student → topic, thicker for stronger topics ────────
     const gravitySel = gGravity.selectAll<SVGLineElement, N>("line").data(nodes).join("line")
       .attr("stroke", (d) => colorFor(d.key))
-      .attr("stroke-opacity", (d) => 0.06 + d.strength * 0.22)
-      .attr("stroke-width", (d) => 0.5 + d.strength * 2);
+      .attr("stroke-opacity", (d) => 0.06 + d.eff * 0.22)
+      .attr("stroke-width", (d) => 0.5 + d.eff * 2);
 
     // ── Bonds ───────────────────────────────────────────────────────────────
     const bondSel = gBonds.selectAll<SVGPathElement, L>("path").data(links).join("path")
@@ -253,10 +303,25 @@ export function MemoryGraph({
     const nodeSel = gNodes.selectAll<SVGGElement, N>("g.node").data(nodes, (d) => d.id)
       .join((enter) => {
         const g = enter.append("g").attr("class", "node").style("cursor", "pointer");
+        g.append("circle").attr("class", "halo");
         g.append("circle").attr("class", "pulse");
         g.append("circle").attr("class", "body");
+        g.append("g").attr("class", "sats");
         return g;
       });
+    nodeSel.select<SVGCircleElement>("circle.halo")
+      .attr("r", (d) => d.r + 11).attr("fill", "none")
+      .attr("stroke", "#f4c542").attr("stroke-width", 1.6).attr("stroke-dasharray", "3 4")
+      .attr("class", (d) => (d.highYield ? "halo mg-spin" : "halo"))
+      .attr("opacity", (d) => (d.highYield ? 0.95 : 0));
+    // Misconception satellites: one small red dot per active wrong belief.
+    nodeSel.select<SVGGElement>("g.sats").each(function (d) {
+      const g = d3.select(this);
+      g.selectAll("circle").data(d3.range(Math.min(d.mis, 4))).join("circle")
+        .attr("r", 3.2).attr("fill", "#ef476f").attr("stroke", "#0b0d10").attr("stroke-width", 1)
+        .attr("cx", (i) => Math.cos(-Math.PI / 4 + i * 0.7) * (d.r + 5))
+        .attr("cy", (i) => Math.sin(-Math.PI / 4 + i * 0.7) * (d.r + 5));
+    });
     nodeSel.select<SVGCircleElement>("circle.pulse")
       .attr("r", (d) => d.r + 6).attr("fill", "none")
       .attr("stroke", "#ef476f").attr("stroke-width", 2)
@@ -265,9 +330,10 @@ export function MemoryGraph({
     nodeSel.select<SVGCircleElement>("circle.body")
       .attr("r", (d) => d.r)
       .attr("fill", (d) => colorFor(d.key))
-      .attr("fill-opacity", (d) => 0.35 + d.strength * 0.6)
+      .attr("fill-opacity", (d) => 0.3 + d.eff * 0.65)
       .attr("stroke", (d) => STATE_COLOR[d.state ?? "active"] ?? STATE_COLOR.active)
-      .attr("stroke-width", (d) => (d.state && d.state !== "active" ? 2.5 : 1.2))
+      .attr("stroke-width", (d) => (d.fading || (d.state && d.state !== "active") ? 2 : 1.2))
+      .attr("stroke-dasharray", (d) => (d.fading ? "2 2" : null))
       .attr("stroke-opacity", 0.9);
 
     const labelSel = gLabels.selectAll<SVGTextElement, N>("text").data(nodes, (d) => d.id).join("text")
@@ -302,9 +368,9 @@ export function MemoryGraph({
         tooltip.style("display", "block")
           .style("left", `${e.clientX - rect.left + 14}px`)
           .style("top", `${e.clientY - rect.top + 14}px`)
-          .html(`<b>${titleCase(d.topic)}</b><div class="meta">${titleCase(d.key)} · ${Math.round(d.strength * 100)}% · ${
-            BANDS.find((b) => b.band === bandFor(d.strength))!.label
-          }</div>`);
+          .html(`<b>${titleCase(d.topic)}</b><div class="meta">${titleCase(d.key)} · ${Math.round(d.eff * 100)}% · ${
+            BANDS.find((b) => b.band === bandFor(d.eff))!.label
+          }${d.fading ? " · fading" : ""}${d.highYield ? " · high-yield gap" : ""}${d.mis ? ` · ${d.mis} misconception${d.mis > 1 ? "s" : ""}` : ""}</div>`);
       })
       .on("mouseleave", () => { tooltip.style("display", "none"); highlight(null); })
       .on("click", (e: MouseEvent, d) => { e.stopPropagation(); setSelectedId(d.id); });
@@ -397,10 +463,24 @@ export function MemoryGraph({
     ro.observe(wrap);
 
     return () => { ro.disconnect(); sim.stop(); };
-  }, [atoms, bonds, subjects, colorFor, weakSet, studentName]);
+  }, [atoms, bonds, subjects, colorFor, weakSet, studentName, misByTopic, highYieldIds]);
 
   // ── Detail panel ─────────────────────────────────────────────────────────
   const selected = atoms.find((a) => a.id === selectedId) ?? null;
+  const sel = selected
+    ? (() => {
+        const eff = effectiveStrength(selected);
+        const subject = titleCase(selected.subject);
+        return {
+          eff,
+          recall: recall(selected),
+          unit: selected.exam_unit ?? null,
+          weight: topicWeightage(exam, subject, selected.exam_unit),
+          highYield: highYieldIds.has(selected.id),
+          misconceptions: misByTopic.get(norm(selected.topic)) ?? [],
+        };
+      })()
+    : null;
   const connections = useMemo(() => {
     if (!selected) return [];
     const byId = new Map(atoms.map((a) => [a.id, a]));
@@ -454,11 +534,11 @@ export function MemoryGraph({
             </div>
             <div className="mt-3">
               <div className="mb-1 flex justify-between text-xs" style={{ color: "#aab4c3" }}>
-                <span>{BANDS.find((b) => b.band === bandFor(selected.strength))!.label}</span>
-                <span>{Math.round(selected.strength * 100)}%</span>
+                <span>{BANDS.find((b) => b.band === bandFor(sel!.eff))!.label}</span>
+                <span>{Math.round(sel!.eff * 100)}%</span>
               </div>
               <div className="h-1.5 w-full rounded-full" style={{ background: "#1f2630" }}>
-                <div className="h-1.5 rounded-full" style={{ width: `${Math.round(selected.strength * 100)}%`, background: colorFor(selected.subject) }} />
+                <div className="h-1.5 rounded-full" style={{ width: `${Math.round(sel!.eff * 100)}%`, background: colorFor(selected.subject) }} />
               </div>
             </div>
             <dl className="mt-3 grid grid-cols-3 gap-2 text-xs">
@@ -469,7 +549,37 @@ export function MemoryGraph({
             {selected.state && selected.state !== "active" ? (
               <div className="mt-2 text-xs" style={{ color: STATE_COLOR[selected.state] ?? "#aab4c3" }}>State: {selected.state}</div>
             ) : null}
+            <dl className="mt-2 grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <dt style={{ color: "#8b95a5" }}>Recall now</dt>
+                <dd className="font-semibold" style={{ color: sel!.recall < 0.5 ? "#f4a261" : undefined }}>
+                  ~{Math.round(sel!.recall * 100)}%{sel!.recall < 0.5 ? " · fading" : ""}
+                </dd>
+              </div>
+              <div>
+                <dt style={{ color: "#8b95a5" }}>{exam} weight</dt>
+                <dd className="font-semibold">{sel!.unit ? `${sel!.unit} · ~${sel!.weight}%` : "—"}</dd>
+              </div>
+            </dl>
+            {sel!.highYield ? (
+              <div className="mt-2 rounded-md px-2 py-1 text-xs" style={{ background: "rgba(244,197,66,.12)", color: "#f4e3a8" }}>
+                High-yield gap: worth many marks and not solid yet
+              </div>
+            ) : null}
             {selected.summary ? <p className="mt-3 text-xs leading-relaxed" style={{ color: "#c9d1dc" }}>{selected.summary}</p> : null}
+            {sel!.misconceptions.length ? (
+              <div className="mt-3">
+                <div className="mb-1 text-xs font-semibold" style={{ color: "#ef476f" }}>Misconceptions to fix</div>
+                <ul className="space-y-1 text-xs" style={{ color: "#c9d1dc" }}>
+                  {sel!.misconceptions.map((m, i) => (
+                    <li key={i}>
+                      <span className="font-medium">{m.pattern}</span>
+                      {m.description ? <span style={{ color: "#8b95a5" }}> — {m.description}</span> : null}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
             <div className="mt-3">
               <div className="mb-1 text-xs font-semibold" style={{ color: "#aab4c3" }}>Connections</div>
               {connections.length ? (
@@ -513,6 +623,18 @@ export function MemoryGraph({
             <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ border: "2px solid #ef476f" }} />
             weak spot
           </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ border: "1.5px dashed #e7ecf3" }} />
+            fading (not reviewed)
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-3 w-3 rounded-full" style={{ border: "1.5px dashed #f4c542" }} />
+            high-yield gap
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: "#ef476f" }} />
+            misconception
+          </span>
         </div>
         <div className="flex flex-wrap items-center gap-1.5 md:ml-auto">
           <span className="font-semibold" style={{ color: "#e7ecf3" }}>How {studentName.split(" ")[0]} learns:</span>
@@ -522,7 +644,7 @@ export function MemoryGraph({
                 key={p.type}
                 className="rounded-full px-2 py-0.5"
                 style={{ background: `rgba(244,197,66,${0.08 + p.confidence * 0.2})`, color: "#f4e3a8" }}
-                title={`${Math.round(p.confidence * 100)}% confident`}
+                title={`${p.instruction ? p.instruction + " · " : ""}${Math.round(p.confidence * 100)}% confident`}
               >
                 {p.label}
               </span>
@@ -531,7 +653,7 @@ export function MemoryGraph({
             <span style={{ color: "#8b95a5" }}>picked up automatically as they chat</span>
           )}
           <span className="ml-2" style={{ color: "#8b95a5" }}>
-            {atoms.length} topics · {bonds.length} links · {weakSet.size} weak spot{weakSet.size === 1 ? "" : "s"}
+            {atoms.length} topics · {bonds.length} links · {misconceptions.length} misconception{misconceptions.length === 1 ? "" : "s"}
           </span>
         </div>
       </div>
@@ -539,6 +661,8 @@ export function MemoryGraph({
       <style>{`
         .mg-tooltip b{display:block;margin-bottom:2px}
         .mg-tooltip .meta{color:#8b95a5;font-size:11px}
+        @keyframes mg-spin{to{transform:rotate(360deg)}}
+        .mg-spin{animation:mg-spin 12s linear infinite;transform-box:fill-box;transform-origin:center}
         @keyframes mg-pulse{0%{stroke-opacity:.9;stroke-width:2}70%{stroke-opacity:0;stroke-width:9}100%{stroke-opacity:0}}
         .mg-pulse{animation:mg-pulse 1.8s ease-out infinite}
       `}</style>

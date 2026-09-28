@@ -76,3 +76,14 @@ export function getWeightage(exam: string, subject: string, topic: string): numb
   // Fallback heuristic for broad matching or default
   return 5;
 }
+
+/** Units the model may assign a topic to, for this exam and subject. */
+export function unitsFor(exam: string, subject: string): string[] {
+  const table = exam.toLowerCase() === "neet" ? NEET_WEIGHTAGE : JEE_WEIGHTAGE;
+  return Object.keys(table[subject] ?? {}).filter((u) => u !== "General");
+}
+
+/** Weightage (%) of a topic's model-assigned exam unit; 5 when not yet classified. */
+export function topicWeightage(exam: string, subject: string, examUnit?: string | null): number {
+  return examUnit ? getWeightage(exam, subject, examUnit) : 5;
+}

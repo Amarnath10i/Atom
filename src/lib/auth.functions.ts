@@ -86,10 +86,10 @@ export const getMyArchitecture = createServerFn({ method: "GET" })
       .eq("auth_user_id", uid)
       .maybeSingle();
     if (!student) {
-      return { student: null, atoms: [], bonds: [], weak: [], reflections: [], patterns: [] };
+      return { student: null, atoms: [], bonds: [], weak: [], reflections: [], patterns: [], misconceptions: [] };
     }
     const sid = student.id;
-    const [atoms, bonds, weak, refl, patterns] = await Promise.all([
+    const [atoms, bonds, weak, refl, patterns, misconceptions] = await Promise.all([
       supabaseAdmin.from("memory_atoms").select("*").eq("student_id", sid),
       supabaseAdmin.from("memory_bonds").select("*").eq("student_id", sid),
       supabaseAdmin
@@ -108,6 +108,12 @@ export const getMyArchitecture = createServerFn({ method: "GET" })
         .select("pattern_type, description, confidence")
         .eq("student_id", sid)
         .order("confidence", { ascending: false }),
+      supabaseAdmin
+        .from("mistake_patterns" as never) // resolved_at is newer than the generated types
+        .select("subject, topic, pattern, description, occurrences")
+        .eq("student_id" as never, sid as never)
+        .eq("category" as never, "misconception" as never)
+        .is("resolved_at" as never, null),
     ]);
     return {
       student,
@@ -115,6 +121,7 @@ export const getMyArchitecture = createServerFn({ method: "GET" })
       bonds: bonds.data ?? [],
       weak: weak.data ?? [],
       reflections: refl.data ?? [],
+      misconceptions: (misconceptions.data ?? []) as unknown as { subject: string; topic: string; pattern: string; description: string | null; occurrences: number }[],
       patterns: (patterns.data ?? []) as unknown as { pattern_type: string; description: string | null; confidence: number }[],
     };
   });

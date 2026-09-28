@@ -13,13 +13,18 @@ import { streamText, tool, convertToCoreMessages } from "ai";
 import { z } from "zod";
 import { getAIProvider } from "@/lib/ai-gateway.server";
 import { calculateSM2 } from "@/lib/learning-os.functions";
-import { JEE_WEIGHTAGE, NEET_WEIGHTAGE } from "@/lib/exam-weightage";
+import { JEE_WEIGHTAGE, NEET_WEIGHTAGE, topicWeightage, unitsFor } from "@/lib/exam-weightage";
 import {
-  PREFERENCE_TYPES,
+  PREF_PREFIX,
+  effectiveStrength,
+  examPriorities,
   findFocusAtoms,
   focusNeighbourhoodText,
+  isFading,
   knowledgeMapText,
   learningProfileText,
+  misconceptionsText,
+  recall,
 } from "@/lib/memory-map";
 
 type ChatMessage = { role: "user" | "assistant" | "system"; content: string };
@@ -199,7 +204,7 @@ export const Route = createFileRoute("/api/chat")({
         }
 
         // ── Agent 1: Curator — load memory context ──────────────────────────
-        const [{ data: student }, { data: atoms }, { data: weak }, { data: plan }, { data: patterns }, { data: bonds }] =
+        const [{ data: student }, { data: atomRows }, { data: weak }, { data: plan }, { data: patterns }, { data: bonds }, { data: misconceptions }] =
           await Promise.all([
             supabaseAdmin
               .from("students")
@@ -237,7 +242,17 @@ export const Route = createFileRoute("/api/chat")({
               .eq("student_id", studentId)
               .order("weight", { ascending: false })
               .limit(40),
+            supabaseAdmin
+              .from("mistake_patterns")
+              .select("id, subject, topic, pattern, description, occurrences")
+              .eq("student_id", studentId)
+              .eq("category", "misconception")
+              .is("resolved_at", null)
+              .order("last_seen", { ascending: false })
+              .limit(8),
           ]);
+        // Every recall estimate uses this student's learned forgetting speed.
+        const atoms = (atomRows ?? []).map((a) => ({ ...a, stability_mul: Number(student?.memory_stability) || 1 }));
 
         const lang = body.language ?? student?.language ?? "english";
 
@@ -269,6 +284,12 @@ export const Route = createFileRoute("/api/chat")({
           return `- [${a.subject}/${a.topic}] strength=${a.strength.toFixed(2)} reviews=${a.reviews}${stateStr}${methods}: ${a.summary}`;
         };
 
+        const exam = student?.exam ?? "JEE";
+        const highYield = examPriorities(atoms ?? [], (a) => topicWeightage(exam, a.subject, a.exam_unit))
+          .filter((p) => effectiveStrength(p.atom) < 0.7)
+          .slice(0, 3);
+        const fading = (atoms ?? []).filter((a) => isFading(a)).slice(0, 5);
+
         const memorySummary = [
           "CURRENT FOCUS (where this question sits in their graph — use it to set depth):",
           focusNeighbourhoodText(findFocusAtoms(lastText ?? "", atoms ?? [], relevantAtoms), atoms ?? [], bonds ?? []),
@@ -282,8 +303,19 @@ export const Route = createFileRoute("/api/chat")({
           "DUE FOR REVIEW (SM-2):",
           ...(dueAtoms.length ? dueAtoms.map(formatAtom) : ["(none)"]),
           "",
-          "KNOWLEDGE MAP (mastery by subject and how topics connect):",
+          "KNOWLEDGE MAP (mastery by subject, adjusted for forgetting, and how topics connect):",
           knowledgeMapText(atoms ?? [], bonds ?? []),
+          "",
+          "ACTIVE MISCONCEPTIONS (wrong beliefs this student has shown — correct them directly when relevant):",
+          misconceptionsText(misconceptions ?? []),
+          "",
+          `HIGHEST-YIELD GAPS for ${exam} (exam weightage × knowledge gap):`,
+          ...(highYield.length
+            ? highYield.map((p) => `- ${p.atom.subject}/${p.atom.topic}: mastery ${Math.round(effectiveStrength(p.atom) * 100)}%, unit worth ~${p.weight}% of ${p.atom.subject}`)
+            : ["(none yet)"]),
+          "",
+          "FADING (known before, not reviewed recently — likely being forgotten):",
+          ...(fading.length ? fading.map((a) => `- ${a.subject}/${a.topic}`) : ["(none)"]),
         ].join("\n");
 
         // Only assert a safety layer that is actually running.
@@ -319,7 +351,7 @@ ${learningProfileText(patterns ?? [])}
 META-COGNITIVE PROFILE (Thinking Patterns)
 ${
   (patterns ?? [])
-    .filter((p) => !PREFERENCE_TYPES.includes(p.pattern_type))
+    .filter((p) => !p.pattern_type.startsWith(PREF_PREFIX))
     .map((p) => `- ${p.pattern_type} (conf: ${(p.confidence * 100).toFixed(0)}%): ${p.description}`)
     .join("\n") || "(no strong patterns detected yet)"
 }
@@ -353,6 +385,9 @@ RULES
 - NEVER announce this as a recommendation or a syllabus instruction. Do NOT say "your next topic is...", "you should now study...", "the next topic is...", or list topics to cover. The new concept must appear as a seamless continuation of the same train of thought, not as a labelled "next step". Keep the extension brief — a bridge, not a second lecture.
 - Reference past LAMA atoms when explaining ("You struggled with this last session, let's fix it.").
 - Adapt to the student, not a fixed template: set the depth from CURRENT FOCUS (weak topic → basics first; mastered → faster and harder), follow HOW THIS STUDENT LIKES TO LEARN, and if they ask for something different in this message (simpler, shorter, with pictures), do that.
+- If the question touches an ACTIVE MISCONCEPTION, name the wrong idea gently and show why it fails (a quick counter-example works well) before giving the right picture. Don't list their misconceptions back to them otherwise.
+- When a FADING topic connects naturally to today's question, weave in one quick recall check about it (a single question, not a lecture). Never label it as "fading" or mention that you track their memory; just ask it naturally.
+- When choosing what to extend into or practise, prefer HIGHEST-YIELD GAPS: they cost the student the most marks.
 - Use the KNOWLEDGE MAP: anchor new ideas in topics the student has Mastered, and if the question depends on a topic listed under "Needs work" (or one it "needs"), briefly shore up that prerequisite first. When you extend into a related concept, prefer one connected to what they are studying in the map.
 - Be warm, specific, and India-aware: NCERT chapters, JEE/NEET pattern, Hindi-medium friendly.
 - Only state facts you are sure of and that match NCERT. If unsure of a number or detail, leave it out rather than guess.
@@ -593,83 +628,140 @@ Do NOT create atoms for non-academic topics like greetings, AI capabilities, or 
               .update({ updated_at: new Date().toISOString() })
               .eq("id", threadId);
 
-            // ── Auto memory-atom extraction (no hardcoding — LLM derives it) ──
+            // ── Learn from this exchange (the model decides; nothing is keyword-matched) ──
             try {
               const { generateText } = await import("ai");
               const { linkAtom, LINKS_INSTRUCTIONS } = await import("@/lib/memory-bonds.server");
-              const { data: knownAtoms } = await supabaseAdmin
-                .from("memory_atoms")
-                .select("subject, topic")
-                .eq("student_id", studentId)
-                .order("last_reviewed", { ascending: false })
-                .limit(60);
+              const [{ data: knownAtoms }, { data: knownPrefs }] = await Promise.all([
+                supabaseAdmin
+                  .from("memory_atoms")
+                  .select("subject, topic")
+                  .eq("student_id", studentId)
+                  .order("last_reviewed", { ascending: false })
+                  .limit(60),
+                supabaseAdmin
+                  .from("pattern_atoms")
+                  .select("pattern_type, description, confidence")
+                  .eq("student_id", studentId)
+                  .like("pattern_type", `${PREF_PREFIX}%`),
+              ]);
               const knownList = (knownAtoms ?? []).map((a) => `- ${a.subject}: ${a.topic}`).join("\n") || "(none yet)";
+              const prefList = (knownPrefs ?? [])
+                .map((p) => `- ${p.pattern_type.slice(PREF_PREFIX.length)}: ${p.description} (confidence ${Math.round(p.confidence * 100)}%)`)
+                .join("\n") || "(none yet)";
+              const unitList = ["Physics", "Chemistry", "Maths", "Biology"]
+                .map((s) => `${s}: ${unitsFor(exam, s).join(", ") || "(n/a)"}`)
+                .join("\n");
               const { text: rawJson } = await generateText({
                 model: provider.model,
                 system:
-                  "Extract one JEE/NEET knowledge atom from the exchange. Reply with STRICT JSON only " +
-                  "(no markdown fences) of shape: " +
-                  '{"subject":"Physics|Chemistry|Maths|Biology","topic":"<short JEE/NEET topic>","summary":"<1-2 sentence learning summary>","strength_delta":<number between -0.2 and 0.2>, ' +
-                  LINKS_INSTRUCTIONS + ', "preferences": [] or a list of ' + PREFERENCE_TYPES.join("|") +
-                  " naming ONLY learning preferences the student clearly showed in THIS message (e.g. asked for images → prefers_visuals, " +
-                  'said "explain simply" or seemed lost in jargon → prefers_simple_language, asked why/for a derivation → prefers_derivations)}. ' +
-                  "If the exchange is about a topic already in the student's list, reuse that exact topic name. " +
-                  "IMPORTANT: subject MUST be exactly Physics, Chemistry, Maths, or Biology. " +
-                  "If the conversation is not about any of these subjects, respond with {\"subject\":\"skip\",\"preferences\":[...]} (preferences still apply). " +
-                  "The topic must be a real JEE/NEET syllabus topic (e.g. Kinematics, Organic Chemistry, Calculus, Human Physiology). " +
-                  "Do NOT create atoms for general conversation, AI capabilities, greetings, etc. " +
-                  "Pick strength_delta based on whether the student showed mastery (positive) or struggled (negative).",
-                prompt: `STUDENT'S EXISTING TOPICS:\n${knownList}\n\nSTUDENT QUERY:\n${lastText}\n\nTUTOR RESPONSE:\n${text}`,
+                  "You maintain a JEE/NEET student's learning model. From the exchange, reply with STRICT JSON only (no markdown fences):\n" +
+                  "{\n" +
+                  '  "subject": "Physics|Chemistry|Maths|Biology" or "skip" if the exchange is not about these subjects,\n' +
+                  '  "existing_topic": exact name from STUDENT\'S EXISTING TOPICS if this exchange is about one of them or a part of one (e.g. time of flight is part of projectile motion), else null,\n' +
+                  '  "topic": chapter-level syllabus topic name, only used when existing_topic is null,\n' +
+                  '  "exam_unit": which EXAM UNIT (for this subject) the topic belongs to, copied exactly,\n' +
+                  '  "summary": 1-2 sentence summary of what the student now knows or struggles with,\n' +
+                  '  "strength_delta": -0.2..0.2 (positive = showed understanding, negative = struggled),\n' +
+                  "  " + LINKS_INSTRUCTIONS + ",\n" +
+                  '  "preferences": [] or observations about HOW this student likes to learn, shown in THIS message: {"key": short_snake_case (reuse a KNOWN PREFERENCES key when it is the same idea), "label": 2-4 word name, "instruction": how the tutor should adapt, "evidence": "for" or "against"}. ' +
+                  'Anything is fair game (wants pictures, prefers Hindi analogies, likes cricket examples, gets impatient with long answers, wants derivations). Use "against" when they push back on a known preference,\n' +
+                  '  "misconceptions": [] or up to 2 {"pattern": short label of a clear WRONG belief the student expressed, "description": what they believe vs what is true},\n' +
+                  '  "resolved": [] or labels copied exactly from ACTIVE MISCONCEPTIONS that the STUDENT\'S OWN MESSAGE now shows they reason about correctly (the tutor explaining it does not count)\n' +
+                  "}\n" +
+                  "Do not create topics for greetings, AI capabilities or general chat (use subject \"skip\"; preferences still apply).",
+                prompt:
+                  `STUDENT'S EXISTING TOPICS:\n${knownList}\n\n` +
+                  `EXAM UNITS (${exam}):\n${unitList}\n\n` +
+                  `KNOWN PREFERENCES:\n${prefList}\n\n` +
+                  `ACTIVE MISCONCEPTIONS:\n${(misconceptions ?? []).map((m) => `- ${m.pattern}`).join("\n") || "(none)"}\n\n` +
+                  `STUDENT QUERY:\n${lastText}\n\nTUTOR RESPONSE:\n${text}`,
               });
               const cleaned = rawJson.trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
               const atom = JSON.parse(cleaned) as {
-                subject: string; topic: string; summary: string; strength_delta: number;
+                subject: string; existing_topic?: string | null; topic?: string; exam_unit?: string;
+                summary: string; strength_delta: number;
                 links?: { topic: string; relation: string; weight?: number }[];
-                preferences?: string[];
+                preferences?: { key: string; label?: string; instruction?: string; evidence?: string }[];
+                misconceptions?: { pattern: string; description?: string }[];
+                resolved?: string[];
               };
 
-              // Learning preferences are recorded even for non-academic turns
-              // ("keep it short", "show me pictures"). Repeats raise confidence.
-              for (const pref of new Set((atom?.preferences ?? []).filter((p) => PREFERENCE_TYPES.includes(p)))) {
+              // Misconceptions the student now gets right stop being re-addressed.
+              const sameIdea = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+              const repeatedNow = (atom?.misconceptions ?? []).map((m) => String(m?.pattern ?? ""));
+              const resolvedLabels = (atom?.resolved ?? [])
+                .map((r) => String(r).trim())
+                .filter((r) => (misconceptions ?? []).some((m) => m.pattern === r))
+                // Voicing the wrong idea again in this very message can't also resolve it.
+                .filter((r) => !repeatedNow.some((p) => sameIdea(p, r)));
+              if (resolvedLabels.length) {
+                await supabaseAdmin.from("mistake_patterns")
+                  .update({ resolved_at: new Date().toISOString() } as never)
+                  .eq("student_id", studentId).eq("category", "misconception").in("pattern", resolvedLabels);
+              }
+
+              // Learning preferences, in the model's own words. Supporting evidence
+              // raises confidence, pushback lowers it, so they can fade away.
+              for (const pref of (atom?.preferences ?? []).slice(0, 3)) {
+                const key = String(pref?.key ?? "").toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40);
+                if (!key) continue;
+                const against = String(pref?.evidence ?? "for").toLowerCase() === "against";
+                const type = `${PREF_PREFIX}${key}`;
                 const { data: prev } = await supabaseAdmin.from("pattern_atoms")
-                  .select("id, confidence, occurrences").eq("student_id", studentId).eq("pattern_type", pref).maybeSingle();
+                  .select("id, confidence, occurrences, description").eq("student_id", studentId).eq("pattern_type", type).maybeSingle();
                 if (prev) {
                   await supabaseAdmin.from("pattern_atoms").update({
-                    confidence: Math.min(0.95, prev.confidence + 0.1),
+                    confidence: Math.max(0.05, Math.min(0.95, prev.confidence + (against ? -0.15 : 0.1))),
                     occurrences: prev.occurrences + 1,
                     last_updated: new Date().toISOString(),
                   } as never).eq("id", prev.id);
-                } else {
+                } else if (!against) {
+                  const label = String(pref?.label ?? key.replace(/_/g, " ")).slice(0, 40);
+                  const instruction = String(pref?.instruction ?? "").slice(0, 200);
                   await supabaseAdmin.from("pattern_atoms").insert({
                     student_id: studentId,
-                    pattern_type: pref,
-                    description: `Showed ${pref.replace("prefers_", "a preference for ").replace(/_/g, " ")}`,
+                    pattern_type: type,
+                    description: `${label} | ${instruction}`,
                     confidence: 0.65,
                   } as never);
                 }
               }
-              // Skip if subject is invalid
+
               if (atom?.subject === "skip" || !atom?.subject) throw new Error("Non-academic conversation");
-              if (atom?.subject && atom?.topic && atom?.summary) {
+              const subject = canonicalSubject(atom.subject);
+              // The model says whether this belongs to an existing topic; trust it only
+              // when the name really is one of theirs.
+              const existingName = (knownAtoms ?? []).find(
+                (k) => k.subject === subject && canonicalTopic(k.topic) === canonicalTopic(String(atom.existing_topic ?? "")),
+              )?.topic;
+              const topic = canonicalTopic(existingName ?? atom.topic ?? "");
+              const examUnit = unitsFor(exam, subject).find((u) => u.toLowerCase() === String(atom.exam_unit ?? "").trim().toLowerCase()) ?? null;
+
+              if (topic && atom.summary && VALID_SUBJECTS.has(subject)) {
                 const delta = Math.max(-0.2, Math.min(0.2, Number(atom.strength_delta) || 0));
-
-                // ── FIX: normalise before lookup — prevents "Math" vs "Maths"
-                //   (and similar variations) from splitting into two atoms ────
-                const subject = canonicalSubject(atom.subject);
-                const topic   = canonicalTopic(atom.topic);
-
-                // Only allow JEE/NEET subjects
-                if (!VALID_SUBJECTS.has(subject)) {
-                  console.log(`[chat] auto-extract skipped non-academic subject: ${subject}`);
-                } else {
                 const { data: existing } = await supabaseAdmin
                   .from("memory_atoms")
-                  .select("id,strength,reviews,sm2_ef,sm2_interval,sm2_repetitions")
+                  .select("id,strength,reviews,sm2_ef,sm2_interval,sm2_repetitions,last_reviewed,exam_unit")
                   .eq("student_id", studentId)
-                  .eq("subject", subject)     // ← normalised
-                  .eq("topic", topic)         // ← normalised
+                  .eq("subject", subject)
+                  .eq("topic", topic)
                   .maybeSingle();
                 if (existing) {
+                  // Learn this student's forgetting speed: compare the recall we predicted
+                  // for this revisit with how they actually did.
+                  const stabilityNow = Number(student?.memory_stability) || 1;
+                  const predicted = recall({ ...existing, subject, topic, stability_mul: stabilityNow } as never);
+                  const nextStability =
+                    predicted < 0.5 && delta >= 0 ? stabilityNow * 1.08   // remembered better than predicted
+                    : predicted > 0.7 && delta < -0.05 ? stabilityNow * 0.92 // forgot sooner than predicted
+                    : stabilityNow;
+                  if (nextStability !== stabilityNow) {
+                    await supabaseAdmin.from("students")
+                      .update({ memory_stability: Math.max(0.4, Math.min(2.5, nextStability)) } as never)
+                      .eq("id", studentId);
+                  }
+
                   const quality = delta > 0.1 ? 5 : delta > 0 ? 4 : delta > -0.1 ? 3 : delta > -0.2 ? 2 : 1;
                   const sm2 = calculateSM2(quality, existing.sm2_ef, existing.sm2_interval, existing.sm2_repetitions);
                   await supabaseAdmin.from("memory_atoms").update({
@@ -677,6 +769,7 @@ Do NOT create atoms for non-academic topics like greetings, AI capabilities, or 
                     reviews: existing.reviews + 1,
                     last_reviewed: new Date().toISOString(),
                     summary: atom.summary,
+                    exam_unit: existing.exam_unit ?? examUnit,
                     sm2_ef: sm2.ef,
                     sm2_interval: sm2.interval,
                     sm2_repetitions: sm2.repetitions,
@@ -687,8 +780,9 @@ Do NOT create atoms for non-academic topics like greetings, AI capabilities, or 
                   const sm2 = calculateSM2(delta > 0 ? 4 : 3);
                   const { data: created } = await supabaseAdmin.from("memory_atoms").insert({
                     student_id: studentId,
-                    subject: subject,      // ← normalised
-                    topic: topic,          // ← normalised
+                    subject,
+                    topic,
+                    exam_unit: examUnit,
                     summary: atom.summary,
                     strength: Math.max(0.2, Math.min(0.9, 0.5 + delta)),
                     sm2_ef: sm2.ef,
@@ -698,7 +792,33 @@ Do NOT create atoms for non-academic topics like greetings, AI capabilities, or 
                   } as never).select("id").single();
                   if (created) await linkAtom(supabaseAdmin, studentId, created.id, atom.links);
                 }
-                } // end VALID_SUBJECTS guard
+
+                // New misconceptions, attached to this topic. A recurrence re-opens a resolved one.
+                for (const m of (atom.misconceptions ?? []).slice(0, 2)) {
+                  const pattern = String(m?.pattern ?? "").trim().slice(0, 120);
+                  if (!pattern) continue;
+                  // The same wrong belief resurfacing under another topic bumps the original record.
+                  const known = (misconceptions ?? []).find((x) => sameIdea(x.pattern, pattern));
+                  const { data: prev } = known
+                    ? { data: { id: known.id, occurrences: known.occurrences } }
+                    : await supabaseAdmin.from("mistake_patterns")
+                        .select("id, occurrences")
+                        .eq("student_id", studentId).eq("subject", subject).eq("topic", topic).eq("pattern", pattern)
+                        .maybeSingle();
+                  if (prev) {
+                    await supabaseAdmin.from("mistake_patterns").update({
+                      occurrences: prev.occurrences + 1,
+                      last_seen: new Date().toISOString(),
+                      resolved_at: null,
+                    } as never).eq("id", prev.id);
+                  } else {
+                    await supabaseAdmin.from("mistake_patterns").insert({
+                      student_id: studentId, subject, topic, pattern,
+                      description: String(m?.description ?? "").slice(0, 400),
+                      category: "misconception",
+                    } as never);
+                  }
+                }
               }
             } catch (e) {
               console.warn("[chat] atom auto-extract failed", e);

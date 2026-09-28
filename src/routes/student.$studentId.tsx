@@ -112,7 +112,7 @@ function Dashboard() {
               </div>
               <span className="text-xs text-muted-foreground">closer = stronger · click a topic for details</span>
             </div>
-            <MemoryGraph atoms={data.atoms as any} bonds={data.bonds as any} studentName={s.name} weakTopics={data.weak as any} patterns={data.patterns as any} />
+            <MemoryGraph atoms={data.atoms as any} bonds={data.bonds as any} studentName={s.name} weakTopics={data.weak as any} patterns={data.patterns as any} misconceptions={data.misconceptions as any} exam={s.exam} memoryStability={(s as any).memory_stability ?? 1} />
           </section>
 
           {/* Threads */}

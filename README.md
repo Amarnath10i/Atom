@@ -116,6 +116,15 @@ In Supabase → Authentication → URL Configuration, the **Site URL** is `https
 
 To run the production build locally: `npm run build && npm start` (port 3000).
 
+### One-time backfills (existing data)
+
+New chats fill these in automatically; these scripts cover data saved before the features existed. Both read `.env`, skip rows that are already done, and accept `--dry-run`.
+
+```bash
+node scripts/backfill-bonds.mjs                                   # links between existing topics
+node --experimental-strip-types scripts/backfill-exam-units.mjs   # exam unit for each topic
+```
+
 ---
 
 ## 🏗 Architecture

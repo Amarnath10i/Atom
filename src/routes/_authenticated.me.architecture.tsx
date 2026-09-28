@@ -144,6 +144,9 @@ function MyArchitecture() {
               studentName={s.name}
               weakTopics={data.weak}
               patterns={data.patterns}
+              misconceptions={data.misconceptions}
+              exam={s.exam}
+              memoryStability={(s as { memory_stability?: number }).memory_stability ?? 1}
               className={graphFullscreen ? "h-full" : undefined}
             />
           </div>
