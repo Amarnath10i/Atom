@@ -15,7 +15,8 @@ Run:  uvicorn agents.main:app --host 0.0.0.0 --port 8787 --reload
 """
 from __future__ import annotations
 from typing import Any
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -31,6 +32,18 @@ app = FastAPI(title="LAMA Agents", version="1.0.0")
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
 )
+
+# When AGENTS_TOKEN is set (production), every route except /health requires it,
+# so a public deploy URL can't be used to spend the LLM quota.
+AGENTS_TOKEN = os.getenv("AGENTS_TOKEN")
+
+
+@app.middleware("http")
+async def require_token(request: Request, call_next):
+    if AGENTS_TOKEN and request.url.path != "/health" and request.method != "OPTIONS":
+        if request.headers.get("x-agents-token") != AGENTS_TOKEN:
+            return JSONResponse({"detail": "unauthorized"}, status_code=401)
+    return await call_next(request)
 
 
 @app.get("/health")
@@ -75,10 +88,6 @@ class PlanIn(BaseModel):
     exam: str
     weak: list[dict]
     current_plan: list[dict] = []
-
-@app.post("/question-gen")
-def qgen_ep(body: QGenIn):
-    return question_gen.generate(body.subject, body.topics, body.difficulty, count=body.count)
 
 class MetaCognitivePredictIn(BaseModel):
     transcript: list[dict]
@@ -143,7 +152,7 @@ class QuestionGenIn(BaseModel):
     topics: list[str]
     difficulty_range: list[int]
     count: int = 3
-    exclude_ids: list[str] = None
+    exclude_ids: list[str] | None = None
 
 @app.post("/generate-questions")
 def generate_questions_ep(body: QuestionGenIn):
@@ -157,4 +166,4 @@ def generate_questions_ep(body: QuestionGenIn):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("agents.main:app", host="0.0.0.0", port=8787, reload=True)
+    uvicorn.run("agents.main:app", host="0.0.0.0", port=int(os.getenv("PORT", "8787")), reload=True)

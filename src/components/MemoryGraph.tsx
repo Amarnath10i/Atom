@@ -1,28 +1,106 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
+import { BANDS, PREFERENCES, RELATION_LABEL, bandFor } from "@/lib/memory-map";
 
-type Atom = { id: string; subject: string; topic: string; strength: number; reviews: number };
-type Bond = { id: string; source_atom: string; target_atom: string; relation?: string; weight: number };
+/**
+ * Student-centred memory map.
+ *
+ *  - The student sits at the centre.
+ *  - Each subject owns a sector; a soft boundary is drawn around its topics.
+ *  - "Gravity": the stronger a topic, the closer it sits to the student.
+ *    Faint rings mark the Mastered / Developing / Needs-work bands.
+ *  - Bonds between topics are drawn as curves coloured by relation, and cross
+ *    subject boundaries when topics from different subjects connect.
+ *  - Node size = how often the topic has been reviewed.
+ */
+
+type Atom = {
+  id: string;
+  subject: string;
+  topic: string;
+  strength: number;
+  reviews: number;
+  summary?: string | null;
+  state?: string | null;
+  last_reviewed?: string | null;
+  sm2_next_review_date?: string | null;
+};
+type Bond = { id?: string; source_atom: string; target_atom: string; relation?: string | null; weight?: number | null };
+type Weak = { subject: string; topic: string; severity: number };
+type Pattern = { pattern_type: string; description?: string | null; confidence: number };
 
 const SUBJECT_COLOR: Record<string, string> = {
-  physics: "#4cc9f0", maths: "#f4a261", chemistry: "#b388ff", chem: "#b388ff",
-  biology: "#57d9a3", bio: "#57d9a3", cs: "#ff6b9d", history: "#ffd166", general: "#9aa4b2",
+  physics: "#4cc9f0", chemistry: "#b388ff", maths: "#f4a261", biology: "#57d9a3",
 };
-const NUCLEUS_COLOR = "#f4c542";
-const SHELL_R: Record<number, number> = { 1: 90, 2: 165, 3: 240 };
-const SHELL_LABEL: Record<number, string> = { 1: "inner · strong", 2: "middle · medium", 3: "outer · weak" };
-
-const colorFor = (s: string) => SUBJECT_COLOR[s.toLowerCase()] || SUBJECT_COLOR.general;
-const initials = (s: string) => {
-  const parts = (s || "").split(/\s+/).filter(Boolean);
-  return ((parts[0]?.[0] || "") + (parts[1]?.[0] || "")).toUpperCase();
+const FALLBACK_COLORS = ["#ff6b9d", "#ffd166", "#9aa4b2", "#06d6a0"];
+const RELATION_COLOR: Record<string, string> = {
+  prerequisite: "#f4a261", application: "#4cc9f0", analogy: "#c77dff",
 };
-const shellFor = (w: number | null | undefined) =>
-  w == null ? 3 : w > 0.7 ? 1 : w > 0.45 ? 2 : 3;
+const STATE_COLOR: Record<string, string> = {
+  stuck: "#ef476f", completed: "#57d9a3", planned: "#8b95a5", stale: "#5c6573", active: "#e7ecf3",
+};
+const CENTER_R = 36;
+const NEAR = 140; // radius for strength 1.0
+const FAR = 380;  // radius for strength 0.0
+const radiusFor = (s: number) => NEAR + (1 - s) * (FAR - NEAR);
 
-export function MemoryGraph({ atoms, bonds, className }: { atoms: Atom[]; bonds: Bond[]; className?: string }) {
+const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+
+export function MemoryGraph({
+  atoms,
+  bonds,
+  studentName = "You",
+  weakTopics = [],
+  patterns = [],
+  className,
+}: {
+  atoms: Atom[];
+  bonds: Bond[];
+  studentName?: string;
+  weakTopics?: Weak[];
+  patterns?: Pattern[];
+  className?: string;
+}) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  const subjects = useMemo(() => {
+    const counts = new Map<string, number>();
+    atoms.forEach((a) => {
+      const s = (a.subject || "general").toLowerCase();
+      counts.set(s, (counts.get(s) ?? 0) + 1);
+    });
+    const order = ["physics", "chemistry", "maths", "biology"];
+    return [...counts.keys()].sort((a, b) => {
+      const ia = order.indexOf(a), ib = order.indexOf(b);
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
+    });
+  }, [atoms]);
+  const colorFor = useMemo(() => {
+    const extra = new Map<string, string>();
+    return (s: string) => {
+      const k = s.toLowerCase();
+      if (SUBJECT_COLOR[k]) return SUBJECT_COLOR[k];
+      if (!extra.has(k)) extra.set(k, FALLBACK_COLORS[extra.size % FALLBACK_COLORS.length]);
+      return extra.get(k)!;
+    };
+  }, []);
+
+  const learnerPrefs = useMemo(
+    () =>
+      patterns.flatMap((p) => {
+        const def = PREFERENCES.find((d) => d.type === p.pattern_type);
+        return def && p.confidence >= 0.6 ? [{ type: def.type, label: def.label, confidence: p.confidence }] : [];
+      }),
+    [patterns],
+  );
+
+  const weakSet = useMemo(
+    () => new Set(weakTopics.filter((w) => w.severity >= 0.5).map((w) => norm(w.topic))),
+    [weakTopics],
+  );
 
   useEffect(() => {
     const svgEl = svgRef.current;
@@ -31,314 +109,439 @@ export function MemoryGraph({ atoms, bonds, className }: { atoms: Atom[]; bonds:
 
     const svg = d3.select(svgEl);
     svg.selectAll("*").remove();
+
+    const defs = svg.append("defs");
+    Object.entries(RELATION_COLOR).forEach(([rel, color]) => {
+      defs.append("marker")
+        .attr("id", `mg-arrow-${rel}`).attr("viewBox", "0 -4 8 8")
+        .attr("refX", 8).attr("refY", 0).attr("markerWidth", 7).attr("markerHeight", 7)
+        .attr("orient", "auto")
+        .append("path").attr("d", "M0,-4L8,0L0,4").attr("fill", color);
+    });
+    const glow = defs.append("radialGradient").attr("id", "mg-center-glow");
+    glow.append("stop").attr("offset", "0%").attr("stop-color", "#f4c542").attr("stop-opacity", 0.35);
+    glow.append("stop").attr("offset", "100%").attr("stop-color", "#f4c542").attr("stop-opacity", 0);
+
     const root = svg.append("g");
-    const gOrbits = root.append("g");
-    const gOrbitLabels = root.append("g");
-    const gSpokes = root.append("g");
+    const gBands = root.append("g");
+    const gHulls = root.append("g");
+    const gGravity = root.append("g");
+    const gBonds = root.append("g");
     const gNodes = root.append("g");
     const gLabels = root.append("g");
+    const gSubjectLabels = root.append("g");
+    const gCenter = root.append("g");
 
-    type A = Atom & {
-      x: number; y: number; r: number; deg: number;
-      isNucleus: boolean; shell: number; orbitRadius: number;
-      fx?: number | null; fy?: number | null;
+    // ── Data ────────────────────────────────────────────────────────────────
+    type N = Atom & {
+      key: string; x: number; y: number; r: number; tx: number; ty: number;
+      targetR: number; weak: boolean; fx?: number | null; fy?: number | null;
     };
-    const norm: A[] = atoms.map((a) => ({
-      ...a,
-      subject: (a.subject || "general").toLowerCase(),
-      strength: typeof a.strength === "number" ? a.strength : 0.5,
-      reviews: a.reviews ?? 0,
-      x: 0, y: 0, r: 0, deg: 0, isNucleus: false, shell: 3, orbitRadius: 240,
-    }));
-    const byId = new Map(norm.map((a) => [a.id, a]));
-    const ids = new Set(norm.map((a) => a.id));
+    const nodes: N[] = atoms.map((a) => {
+      const strength = typeof a.strength === "number" ? Math.max(0, Math.min(1, a.strength)) : 0.5;
+      const reviews = a.reviews ?? 0;
+      return {
+        ...a,
+        strength,
+        reviews,
+        key: (a.subject || "general").toLowerCase(),
+        x: 0, y: 0, tx: 0, ty: 0,
+        r: 8 + Math.min(10, Math.sqrt(reviews) * 2.4),
+        targetR: radiusFor(strength),
+        weak: weakSet.has(norm(a.topic)) || a.state === "stuck",
+      };
+    });
+    const byId = new Map(nodes.map((n) => [n.id, n]));
     const links = bonds
+      .filter((b) => byId.has(b.source_atom) && byId.has(b.target_atom) && b.source_atom !== b.target_atom)
       .map((b, i) => ({
-        id: b.id || "e" + i,
-        source: String(b.source_atom),
-        target: String(b.target_atom),
+        id: b.id ?? `b${i}`,
+        source: byId.get(b.source_atom)!,
+        target: byId.get(b.target_atom)!,
+        relation: b.relation && RELATION_COLOR[b.relation] ? b.relation : "application",
         weight: typeof b.weight === "number" ? b.weight : 0.5,
-      }))
-      .filter((b) => ids.has(b.source) && ids.has(b.target) && b.source !== b.target);
-
-    const adj = new Map<string, Map<string, number>>(norm.map((a) => [a.id, new Map()]));
-    links.forEach((b) => {
-      adj.get(b.source)!.set(b.target, Math.max(adj.get(b.source)!.get(b.target) || 0, b.weight));
-      adj.get(b.target)!.set(b.source, Math.max(adj.get(b.target)!.get(b.source) || 0, b.weight));
-    });
-    const degree: Record<string, number> = {};
-    links.forEach((b) => {
-      degree[b.source] = (degree[b.source] || 0) + b.weight;
-      degree[b.target] = (degree[b.target] || 0) + b.weight;
-    });
-    norm.forEach((a) => {
-      a.deg = degree[a.id] || 0;
-      a.r = 12 + a.strength * 12 + Math.sqrt(a.deg) * 1.8;
+      }));
+    type L = (typeof links)[number];
+    const neighbours = new Map<string, Set<string>>(nodes.map((n) => [n.id, new Set()]));
+    links.forEach((l) => {
+      neighbours.get(l.source.id)!.add(l.target.id);
+      neighbours.get(l.target.id)!.add(l.source.id);
     });
 
-    const subjects = [...new Set(norm.map((a) => a.subject))];
-    subjects.forEach((s) => {
-      const members = norm.filter((a) => a.subject === s).sort((a, b) => b.deg - a.deg);
-      members.forEach((a, i) => (a.isNucleus = i === 0));
-    });
-
-    const clusterPos: Record<string, { x: number; y: number }> = {};
-    const ringRadius = Math.max(280, subjects.length * 140);
+    // ── Sectors: each subject gets an arc proportional to its topic count ───
+    const GAP = subjects.length > 1 ? 0.18 : 0;
+    const weights = subjects.map((s) => Math.max(2, nodes.filter((n) => n.key === s).length));
+    const total = weights.reduce((a, b) => a + b, 0);
+    const avail = Math.PI * 2 - GAP * subjects.length;
+    const sector = new Map<string, { start: number; end: number; mid: number }>();
+    let cursor = -Math.PI / 2;
     subjects.forEach((s, i) => {
-      const ang = (i / subjects.length) * Math.PI * 2;
-      clusterPos[s] = { x: Math.cos(ang) * ringRadius, y: Math.sin(ang) * ringRadius };
-    });
-
-    norm.forEach((a) => {
-      if (a.isNucleus) {
-        a.shell = 0; a.orbitRadius = 0; return;
-      }
-      const nucleus = norm.find((n) => n.subject === a.subject && n.isNucleus);
-      const w = nucleus ? adj.get(a.id)?.get(nucleus.id) ?? null : null;
-      a.shell = shellFor(w);
-      a.orbitRadius = SHELL_R[a.shell];
+      const span = (weights[i] / total) * avail;
+      sector.set(s, { start: cursor + GAP / 2, end: cursor + GAP / 2 + span, mid: cursor + GAP / 2 + span / 2 });
+      cursor += span + GAP;
     });
     subjects.forEach((s) => {
-      const members = norm.filter((a) => a.subject === s);
-      const nucleus = members.find((a) => a.isNucleus);
-      const c = clusterPos[s];
-      if (nucleus) { nucleus.x = c.x; nucleus.y = c.y; }
-      const byShell = new Map<number, A[]>();
-      members.forEach((a) => {
-        if (a.isNucleus) return;
-        if (!byShell.has(a.shell)) byShell.set(a.shell, []);
-        byShell.get(a.shell)!.push(a);
-      });
-      byShell.forEach((list, shell) => {
-        const radius = SHELL_R[shell];
-        list.forEach((a, i) => {
-          const ang = (i / list.length) * Math.PI * 2 + shell * 0.6;
-          a.x = c.x + Math.cos(ang) * radius;
-          a.y = c.y + Math.sin(ang) * radius;
-        });
+      const members = nodes.filter((n) => n.key === s).sort((a, b) => b.strength - a.strength);
+      const sec = sector.get(s)!;
+      members.forEach((n, i) => {
+        // Spread across the sector, alternating so neighbours differ in radius.
+        const t = members.length === 1 ? 0.5 : (i + 0.5) / members.length;
+        const ang = sec.start + (sec.end - sec.start) * (i % 2 ? 1 - t : t);
+        n.tx = Math.cos(ang) * n.targetR;
+        n.ty = Math.sin(ang) * n.targetR;
+        n.x = n.tx; n.y = n.ty;
       });
     });
 
-    type Ring = { id: string; subject: string; shell: number; r: number; cx: number; cy: number; text?: string };
-    const orbitRings: Ring[] = [];
-    const orbitLabels: Ring[] = [];
-    subjects.forEach((s) => {
-      const members = norm.filter((a) => a.subject === s && !a.isNucleus);
-      [...new Set(members.map((a) => a.shell))].sort().forEach((shell) => {
-        orbitRings.push({ id: `${s}-o-${shell}`, subject: s, shell, r: SHELL_R[shell], cx: clusterPos[s].x, cy: clusterPos[s].y });
-        orbitLabels.push({ id: `${s}-ol-${shell}`, subject: s, shell, r: SHELL_R[shell], cx: clusterPos[s].x, cy: clusterPos[s].y, text: SHELL_LABEL[shell] });
-      });
+    // ── Mastery bands (concentric "gravity" rings) ──────────────────────────
+    const bandEdges = [
+      { r: radiusFor(BANDS[0].min), label: BANDS[0].label },
+      { r: radiusFor(BANDS[1].min), label: BANDS[1].label },
+      { r: FAR + 30, label: BANDS[2].label },
+    ];
+    gBands.selectAll("circle").data(bandEdges).join("circle")
+      .attr("r", (d) => d.r).attr("fill", "none")
+      .attr("stroke", "#2a3340").attr("stroke-dasharray", "2 6").attr("stroke-width", 1);
+    gBands.selectAll("text").data(bandEdges).join("text")
+      .attr("x", 0).attr("y", (d) => -d.r + 14)
+      .attr("text-anchor", "middle").attr("font-size", 10).attr("fill", "#5c6573")
+      .attr("letter-spacing", "0.08em")
+      .text((d) => d.label.toUpperCase());
+
+    // ── Subject boundaries ──────────────────────────────────────────────────
+    const hullLine = d3.line().curve(d3.curveCatmullRomClosed.alpha(0.6));
+    const hullSel = gHulls.selectAll<SVGPathElement, string>("path").data(subjects).join("path")
+      .attr("fill", (s) => colorFor(s)).attr("fill-opacity", 0.07)
+      .attr("stroke", (s) => colorFor(s)).attr("stroke-opacity", 0.45)
+      .attr("stroke-width", 1.5).attr("stroke-dasharray", "6 4");
+    const subjectStats = new Map(subjects.map((s) => {
+      const m = nodes.filter((n) => n.key === s);
+      const avg = m.reduce((a, n) => a + n.strength, 0) / (m.length || 1);
+      return [s, { count: m.length, avg }];
+    }));
+    const subjectLabelSel = gSubjectLabels.selectAll<SVGGElement, string>("g").data(subjects).join((enter) => {
+      const g = enter.append("g").attr("pointer-events", "none");
+      g.append("text").attr("class", "name").attr("text-anchor", "middle")
+        .attr("font-size", 14).attr("font-weight", 700);
+      g.append("text").attr("class", "meta").attr("text-anchor", "middle").attr("dy", 15)
+        .attr("font-size", 10).attr("fill", "#8b95a5");
+      return g;
+    });
+    subjectLabelSel.select("text.name").attr("fill", (s) => colorFor(s)).text((s) => titleCase(s));
+    subjectLabelSel.select("text.meta").text((s) => {
+      const st = subjectStats.get(s)!;
+      return `${st.count} topic${st.count === 1 ? "" : "s"} · ${Math.round(st.avg * 100)}% mastery`;
     });
 
-    const orbitSel = gOrbits.selectAll<SVGCircleElement, Ring>("circle.orbit")
-      .data(orbitRings, (d: Ring) => d.id)
-      .join("circle")
-      .attr("class", (d) => `orbit shell-${d.shell}`)
+    // ── Gravity lines: student → topic, thicker for stronger topics ────────
+    const gravitySel = gGravity.selectAll<SVGLineElement, N>("line").data(nodes).join("line")
+      .attr("stroke", (d) => colorFor(d.key))
+      .attr("stroke-opacity", (d) => 0.06 + d.strength * 0.22)
+      .attr("stroke-width", (d) => 0.5 + d.strength * 2);
+
+    // ── Bonds ───────────────────────────────────────────────────────────────
+    const bondSel = gBonds.selectAll<SVGPathElement, L>("path").data(links).join("path")
       .attr("fill", "none")
-      .attr("stroke", (d) => (d.shell === 1 ? "#ff6b9d" : d.shell === 2 ? "#4cc9f0" : "#9b8ec4"))
-      .attr("stroke-opacity", (d) => (d.shell === 1 ? 0.6 : d.shell === 2 ? 0.5 : 0.4))
-      .attr("stroke-width", 1.5)
-      .attr("stroke-dasharray", "4 5")
-      .attr("r", (d) => d.r).attr("cx", (d) => d.cx).attr("cy", (d) => d.cy);
+      .attr("stroke", (d) => RELATION_COLOR[d.relation])
+      .attr("stroke-opacity", (d) => 0.35 + d.weight * 0.45)
+      .attr("stroke-width", (d) => 1 + d.weight * 2.2)
+      .attr("stroke-dasharray", (d) => (d.relation === "analogy" ? "5 4" : null))
+      .attr("marker-end", (d) => (d.relation === "prerequisite" ? `url(#mg-arrow-prerequisite)` : null));
 
-    const orbitLabelSel = gOrbitLabels.selectAll<SVGTextElement, Ring>("text.orbit-label")
-      .data(orbitLabels, (d: Ring) => d.id)
-      .join("text")
-      .attr("class", (d) => `orbit-label shell-${d.shell}`)
-      .attr("fill", (d) => (d.shell === 1 ? "#ff6b9d" : d.shell === 2 ? "#4cc9f0" : "#9b8ec4"))
-      .attr("font-size", 10).attr("font-weight", 700).attr("opacity", 0.9)
-      .text((d) => d.text || "");
-
-    type Spoke = { id: string; source: string; target: string; weight: number };
-    const spokes: Spoke[] = [];
-    subjects.forEach((s) => {
-      const members = norm.filter((a) => a.subject === s);
-      const nucleus = members.find((a) => a.isNucleus);
-      if (!nucleus) return;
-      members.forEach((a) => {
-        if (a.isNucleus) return;
-        const w = adj.get(a.id)?.get(nucleus.id) ?? 0.3;
-        spokes.push({ id: "sp-" + a.id, source: a.id, target: nucleus.id, weight: w });
-      });
-    });
-    const extraBonds = links
-      .filter((b) => {
-        const s = byId.get(b.source); const t = byId.get(b.target);
-        if (!s || !t) return false;
-        if ((s.isNucleus || t.isNucleus) && s.subject === t.subject) return false;
-        return true;
-      })
-      .map((b) => {
-        const s = byId.get(b.source)!; const t = byId.get(b.target)!;
-        return { ...b, cross: s.subject !== t.subject };
-      });
-
-    const spokeSel = gSpokes.selectAll<SVGLineElement, Spoke>("line.spoke")
-      .data(spokes, (d: Spoke) => d.id)
-      .join("line")
-      .attr("class", (d) => `spoke shell-${byId.get(d.source)?.shell}`)
-      .attr("fill", "none")
-      .attr("stroke", (d) => {
-        const sh = byId.get(d.source)?.shell;
-        return sh === 1 ? "#ff6b9d" : sh === 2 ? "#4cc9f0" : "#9b8ec4";
-      })
-      .attr("stroke-opacity", (d) => {
-        const sh = byId.get(d.source)?.shell;
-        return sh === 1 ? 0.95 : sh === 2 ? 0.75 : 0.45;
-      })
-      .attr("stroke-dasharray", (d) => (byId.get(d.source)?.shell === 3 ? "3 3" : null))
-      .attr("stroke-width", (d) => 0.8 + d.weight * 2.6);
-
-    const extraSel = gSpokes.selectAll<SVGLineElement, typeof extraBonds[number]>("line.extra")
-      .data(extraBonds, (d) => d.id)
-      .join("line")
-      .attr("stroke", (d) => (d.cross ? "#ef476f" : "#ffd166"))
-      .attr("stroke-opacity", (d) => (d.cross ? 0.55 : 0.5))
-      .attr("stroke-dasharray", (d) => (d.cross ? "1 4" : "2 3"))
-      .attr("stroke-width", (d) => 0.5 + d.weight * 1.4);
-
+    // ── Nodes ───────────────────────────────────────────────────────────────
     const tooltip = d3.select(wrap).select<HTMLDivElement>(".mg-tooltip");
-
-    const nodeSel = gNodes.selectAll<SVGGElement, A>("g.node")
-      .data(norm, (d: A) => d.id)
+    const nodeSel = gNodes.selectAll<SVGGElement, N>("g.node").data(nodes, (d) => d.id)
       .join((enter) => {
-        const g = enter.append("g").attr("class", "node");
-        g.append("circle").attr("class", "ring").attr("fill", "none");
+        const g = enter.append("g").attr("class", "node").style("cursor", "pointer");
+        g.append("circle").attr("class", "pulse");
         g.append("circle").attr("class", "body");
-        g.append("text").attr("class", "initials")
-          .attr("text-anchor", "middle").attr("dominant-baseline", "middle")
-          .attr("font-size", 10).attr("font-weight", 700).attr("fill", "#0b0d10")
-          .attr("pointer-events", "none");
         return g;
-      })
-      .attr("class", (d) => "node" + (d.isNucleus ? " nucleus" : ""))
-      .style("cursor", "grab")
+      });
+    nodeSel.select<SVGCircleElement>("circle.pulse")
+      .attr("r", (d) => d.r + 6).attr("fill", "none")
+      .attr("stroke", "#ef476f").attr("stroke-width", 2)
+      .attr("class", (d) => (d.weak ? "pulse mg-pulse" : "pulse"))
+      .attr("opacity", (d) => (d.weak ? 1 : 0));
+    nodeSel.select<SVGCircleElement>("circle.body")
+      .attr("r", (d) => d.r)
+      .attr("fill", (d) => colorFor(d.key))
+      .attr("fill-opacity", (d) => 0.35 + d.strength * 0.6)
+      .attr("stroke", (d) => STATE_COLOR[d.state ?? "active"] ?? STATE_COLOR.active)
+      .attr("stroke-width", (d) => (d.state && d.state !== "active" ? 2.5 : 1.2))
+      .attr("stroke-opacity", 0.9);
+
+    const labelSel = gLabels.selectAll<SVGTextElement, N>("text").data(nodes, (d) => d.id).join("text")
+      .attr("pointer-events", "none").attr("font-size", 11).attr("fill", "#c9d1dc")
+      .attr("paint-order", "stroke").attr("stroke", "#0b0d10").attr("stroke-width", 3)
+      .text((d) => (d.topic.length > 26 ? d.topic.slice(0, 25) + "…" : titleCase(d.topic)));
+
+    // ── Student at the centre ───────────────────────────────────────────────
+    gCenter.append("circle").attr("r", CENTER_R * 2.6).attr("fill", "url(#mg-center-glow)");
+    gCenter.append("circle").attr("r", CENTER_R)
+      .attr("fill", "#f4c542").attr("stroke", "#fff3c4").attr("stroke-width", 2);
+    const initials = studentName.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase()).join("");
+    gCenter.append("text").attr("text-anchor", "middle").attr("dominant-baseline", "central")
+      .attr("font-size", 18).attr("font-weight", 800).attr("fill", "#0b0d10").text(initials || "•");
+    gCenter.append("text").attr("text-anchor", "middle").attr("y", CENTER_R + 18)
+      .attr("font-size", 13).attr("font-weight", 700).attr("fill", "#f4f1e6")
+      .attr("paint-order", "stroke").attr("stroke", "#0b0d10").attr("stroke-width", 4)
+      .text(studentName);
+
+    // ── Interaction: highlight neighbourhood on hover, select on click ─────
+    const highlight = (id: string | null) => {
+      const near = id ? new Set([id, ...(neighbours.get(id) ?? [])]) : null;
+      nodeSel.attr("opacity", (d) => (!near || near.has(d.id) ? 1 : 0.18));
+      labelSel.attr("opacity", (d) => (!near || near.has(d.id) ? 1 : 0.15));
+      gravitySel.attr("opacity", (d) => (!near || d.id === id ? 1 : 0.2));
+      bondSel.attr("opacity", (d) => (!near || d.source.id === id || d.target.id === id ? 1 : 0.08));
+    };
+    nodeSel
+      .on("mouseenter", (_, d) => highlight(d.id))
       .on("mousemove", (e: MouseEvent, d) => {
         const rect = wrap.getBoundingClientRect();
         tooltip.style("display", "block")
-          .style("left", e.clientX - rect.left + 14 + "px")
-          .style("top", e.clientY - rect.top + 14 + "px")
-          .html(
-            `<b>${d.topic}</b><div class="meta">${d.subject} · strength ${(d.strength * 100).toFixed(0)}% · ${d.reviews} reviews${
-              d.isNucleus ? " · nucleus" : ` · ${SHELL_LABEL[d.shell]}`
-            }</div>`
-          );
+          .style("left", `${e.clientX - rect.left + 14}px`)
+          .style("top", `${e.clientY - rect.top + 14}px`)
+          .html(`<b>${titleCase(d.topic)}</b><div class="meta">${titleCase(d.key)} · ${Math.round(d.strength * 100)}% · ${
+            BANDS.find((b) => b.band === bandFor(d.strength))!.label
+          }</div>`);
       })
-      .on("mouseleave", () => tooltip.style("display", "none"));
+      .on("mouseleave", () => { tooltip.style("display", "none"); highlight(null); })
+      .on("click", (e: MouseEvent, d) => { e.stopPropagation(); setSelectedId(d.id); });
+    svg.on("click", () => setSelectedId(null));
 
-    nodeSel.select("circle.ring")
-      .attr("r", (d) => d.r + (d.isNucleus ? 5 : 3))
-      .attr("stroke", (d) => (d.isNucleus ? NUCLEUS_COLOR : colorFor(d.subject)))
-      .attr("stroke-width", (d) => (d.isNucleus ? 2.5 : 1.5))
-      .attr("opacity", (d) => (d.isNucleus ? 0.95 : 0.65));
-    nodeSel.select("circle.body")
-      .attr("r", (d) => d.r)
-      .attr("fill", (d) => (d.isNucleus ? NUCLEUS_COLOR : colorFor(d.subject)))
-      .attr("fill-opacity", (d) => (d.isNucleus ? 1 : 0.55 + d.strength * 0.35))
-      .attr("stroke", (d) => (d.isNucleus ? NUCLEUS_COLOR : colorFor(d.subject)))
-      .attr("stroke-width", (d) => (d.isNucleus ? 2.5 : 1.5));
-    nodeSel.select("text.initials")
-      .attr("font-size", (d) => (d.isNucleus ? 11 : 10))
-      .text((d) => initials(d.topic));
+    // ── Simulation ──────────────────────────────────────────────────────────
+    const sim = d3.forceSimulation<N>(nodes)
+      .force("x", d3.forceX<N>((d) => d.tx).strength(0.12))
+      .force("y", d3.forceY<N>((d) => d.ty).strength(0.12))
+      .force("radial", d3.forceRadial<N>((d) => d.targetR, 0, 0).strength(0.6))
+      .force("collide", d3.forceCollide<N>().radius((d) => d.r + 16).strength(0.9))
+      .force("bond", d3.forceLink<N, L>(links).id((d) => d.id).distance(90).strength((l) => 0.03 + l.weight * 0.05))
+      .alpha(1).alphaDecay(0.035);
 
-    const labelSel = gLabels.selectAll<SVGTextElement, A>("text.topic-label")
-      .data(norm, (d: A) => d.id)
-      .join("text")
-      .attr("class", (d) => "topic-label" + (d.isNucleus ? " nucleus-label" : ""))
-      .attr("pointer-events", "none")
-      .attr("fill", (d) => (d.isNucleus ? "#e7ecf3" : "#8b95a5"))
-      .attr("font-size", (d) => (d.isNucleus ? 11 : 10))
-      .attr("font-weight", (d) => (d.isNucleus ? 700 : 400))
-      .attr("text-anchor", (d) => (d.isNucleus ? "middle" : "start"))
-      .text((d) => (d.isNucleus ? d.topic : d.topic.length > 28 ? d.topic.slice(0, 27) + "…" : d.topic));
+    const bondPath = (d: L) => {
+      const sx = d.source.x, sy = d.source.y, tx = d.target.x, ty = d.target.y;
+      const dx = tx - sx, dy = ty - sy;
+      const len = Math.hypot(dx, dy) || 1;
+      // Bow the curve slightly outward so links don't run through the centre.
+      const mx = (sx + tx) / 2, my = (sy + ty) / 2;
+      const bow = Math.min(60, len * 0.22);
+      const outward = Math.sign(mx * -dy + my * dx) || 1;
+      const cx = mx + (-dy / len) * bow * outward;
+      const cy = my + (dx / len) * bow * outward;
+      // End the arrow at the target's edge.
+      const ex = tx - ((tx - cx) / Math.hypot(tx - cx, ty - cy)) * (d.target.r + 4);
+      const ey = ty - ((ty - cy) / Math.hypot(tx - cx, ty - cy)) * (d.target.r + 4);
+      return `M${sx},${sy} Q${cx},${cy} ${ex},${ey}`;
+    };
 
-    const sim = d3.forceSimulation<A>(norm)
-      .force("link", d3.forceLink<A, Spoke>(spokes).id((d) => d.id)
-        .distance((d: any) => byId.get(typeof d.source === "string" ? d.source : d.source.id)?.orbitRadius || 90)
-        .strength(0.9))
-      .force("charge", d3.forceManyBody<A>().strength((d) => (d.isNucleus ? -30 : -40)))
-      .force("collide", d3.forceCollide<A>().radius((d) => d.r + 14).strength(0.85))
-      .force("radial", d3.forceRadial<A>(
-        (d) => (d.isNucleus ? 0 : d.orbitRadius),
-        (d) => (clusterPos[d.subject] || { x: 0 }).x,
-        (d) => (clusterPos[d.subject] || { y: 0 }).y
-      ).strength((d) => (d.isNucleus ? 0 : 0.85)))
-      .force("clusterX", d3.forceX<A>((d) => (clusterPos[d.subject] || { x: 0 }).x).strength((d) => (d.isNucleus ? 1 : 0.02)))
-      .force("clusterY", d3.forceY<A>((d) => (clusterPos[d.subject] || { y: 0 }).y).strength((d) => (d.isNucleus ? 1 : 0.02)))
-      .alpha(1).alphaDecay(0.03);
+    const hullPoints = (s: string): [number, number][] => {
+      const pts: [number, number][] = [];
+      nodes.filter((n) => n.key === s).forEach((n) => {
+        const pad = n.r + 38;
+        for (let k = 0; k < 10; k++) {
+          const a = (k / 10) * Math.PI * 2;
+          pts.push([n.x + Math.cos(a) * pad, n.y + Math.sin(a) * pad]);
+        }
+      });
+      return pts;
+    };
 
     sim.on("tick", () => {
-      spokeSel
-        .attr("x1", (d) => byId.get(d.source)?.x ?? 0).attr("y1", (d) => byId.get(d.source)?.y ?? 0)
-        .attr("x2", (d) => byId.get(d.target)?.x ?? 0).attr("y2", (d) => byId.get(d.target)?.y ?? 0);
-      extraSel
-        .attr("x1", (d) => byId.get(d.source)?.x ?? 0).attr("y1", (d) => byId.get(d.source)?.y ?? 0)
-        .attr("x2", (d) => byId.get(d.target)?.x ?? 0).attr("y2", (d) => byId.get(d.target)?.y ?? 0);
+      gravitySel
+        .attr("x1", 0).attr("y1", 0)
+        .attr("x2", (d) => d.x).attr("y2", (d) => d.y);
+      bondSel.attr("d", bondPath);
       nodeSel.attr("transform", (d) => `translate(${d.x},${d.y})`);
       labelSel
-        .attr("x", (d) => d.x + (d.isNucleus ? 0 : d.r + 8))
-        .attr("y", (d) => d.y + (d.isNucleus ? d.r + 16 : 3));
-      orbitSel.each(function (d) {
-        const n = norm.find((a) => a.subject === d.subject && a.isNucleus);
-        if (n) { d.cx = n.x; d.cy = n.y; }
-      }).attr("cx", (d) => d.cx).attr("cy", (d) => d.cy);
-      orbitLabelSel.each(function (d) {
-        const n = norm.find((a) => a.subject === d.subject && a.isNucleus);
-        if (n) { d.cx = n.x; d.cy = n.y; }
-      })
-        .attr("x", (d) => d.cx + d.r * Math.cos(-Math.PI / 4) + 6)
-        .attr("y", (d) => d.cy + d.r * Math.sin(-Math.PI / 4));
+        .attr("x", (d) => d.x + (d.x >= 0 ? d.r + 6 : -(d.r + 6)))
+        .attr("y", (d) => d.y + 4)
+        .attr("text-anchor", (d) => (d.x >= 0 ? "start" : "end"));
+      hullSel.attr("d", (s) => {
+        const hull = d3.polygonHull(hullPoints(s));
+        return hull ? hullLine(hull) : null;
+      });
+      subjectLabelSel.attr("transform", (s) => {
+        const sec = sector.get(s)!;
+        const outer = Math.max(...nodes.filter((n) => n.key === s).map((n) => Math.hypot(n.x, n.y) + n.r), NEAR);
+        const rr = Math.max(outer + 72, FAR + 40);
+        return `translate(${Math.cos(sec.mid) * rr},${Math.sin(sec.mid) * rr})`;
+      });
     });
 
     nodeSel.call(
-      d3.drag<SVGGElement, A>()
-        .on("start", (e, d) => { if (!e.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+      d3.drag<SVGGElement, N>()
+        .on("start", (e, d) => { if (!e.active) sim.alphaTarget(0.25).restart(); d.fx = d.x; d.fy = d.y; })
         .on("drag", (e, d) => { d.fx = e.x; d.fy = e.y; })
-        .on("end", (e, d) => { if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; })
+        .on("end", (e, d) => { if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }),
     );
 
     const zoom = d3.zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.25, 4])
+      .scaleExtent([0.2, 4])
       .on("zoom", (e) => root.attr("transform", e.transform.toString()));
-    svg.call(zoom);
+    svg.call(zoom).on("dblclick.zoom", null);
 
-    // center on the wrap size
+    // Fit the view to where the topics actually are (plus room for labels),
+    // keeping the student at the centre.
     const fit = () => {
       const w = wrap.clientWidth || 600;
       const h = wrap.clientHeight || 420;
-      svg.call(zoom.transform, d3.zoomIdentity.translate(w / 2, h / 2).scale(0.75));
+      const reachX = Math.max(NEAR, ...nodes.map((n) => Math.abs(n.x) + n.r + 150));
+      const reachY = Math.max(NEAR, ...nodes.map((n) => Math.abs(n.y) + n.r + 70));
+      const k = Math.min(w / (reachX * 2), h / (reachY * 2));
+      svg.call(zoom.transform, d3.zoomIdentity.translate(w / 2, h / 2).scale(Math.max(0.3, Math.min(1.4, k))));
     };
     fit();
+    sim.on("end", fit);
     const ro = new ResizeObserver(fit);
     ro.observe(wrap);
 
     return () => { ro.disconnect(); sim.stop(); };
-  }, [atoms, bonds]);
+  }, [atoms, bonds, subjects, colorFor, weakSet, studentName]);
+
+  // ── Detail panel ─────────────────────────────────────────────────────────
+  const selected = atoms.find((a) => a.id === selectedId) ?? null;
+  const connections = useMemo(() => {
+    if (!selected) return [];
+    const byId = new Map(atoms.map((a) => [a.id, a]));
+    return bonds.flatMap((b) => {
+      if (b.source_atom === selected.id && byId.has(b.target_atom)) {
+        return [{ other: byId.get(b.target_atom)!, text: RELATION_LABEL[b.relation ?? ""] ?? "relates to", relation: b.relation ?? "" }];
+      }
+      if (b.target_atom === selected.id && byId.has(b.source_atom)) {
+        const rev: Record<string, string> = { prerequisite: "is needed for", application: "is applied in", analogy: "is like" };
+        return [{ other: byId.get(b.source_atom)!, text: rev[b.relation ?? ""] ?? "relates to", relation: b.relation ?? "" }];
+      }
+      return [];
+    });
+  }, [selected, atoms, bonds]);
+
+  const fmtDate = (s?: string | null) =>
+    s ? new Date(s).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : "—";
 
   return (
     <div
-      ref={wrapRef}
-      className={`relative overflow-hidden rounded-xl border border-border bg-card/40 ${className ?? "h-[420px]"}`}
+      className={`flex flex-col overflow-hidden rounded-xl border border-border ${className ?? "h-[560px]"}`}
       style={{ background: "#0b0d10" }}
     >
-      <svg ref={svgRef} style={{ width: "100%", height: "100%", display: "block", cursor: "grab" }} />
-      <div
-        className="mg-tooltip"
-        style={{
-          position: "absolute", pointerEvents: "none", display: "none",
-          background: "rgba(18,22,28,.95)", border: "1px solid #1f2630", borderRadius: 8,
-          padding: "8px 10px", fontSize: 12, color: "#e7ecf3", maxWidth: 260, zIndex: 10,
-        }}
-      />
-      <div
-        style={{
-          position: "absolute", left: 10, bottom: 8, fontSize: 10, color: "#8b95a5",
-          pointerEvents: "none",
-        }}
-      >
-        drag nodes · scroll to zoom · drag canvas to pan · hover for details
+      <div ref={wrapRef} className="relative min-h-0 flex-1">
+        <svg ref={svgRef} style={{ width: "100%", height: "100%", display: "block", cursor: "grab" }} />
+
+        <div
+          className="mg-tooltip"
+          style={{
+            position: "absolute", pointerEvents: "none", display: "none",
+            background: "rgba(18,22,28,.96)", border: "1px solid #1f2630", borderRadius: 8,
+            padding: "8px 10px", fontSize: 12, color: "#e7ecf3", maxWidth: 260, zIndex: 10,
+          }}
+        />
+
+        {/* Selected topic */}
+        {selected ? (
+          <div
+            className="absolute right-3 top-3 w-72 max-w-[calc(100%-1.5rem)] rounded-xl p-4 text-sm"
+            style={{ background: "rgba(18,22,28,.97)", border: "1px solid #1f2630", color: "#e7ecf3" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <div className="text-xs uppercase tracking-wide" style={{ color: colorFor(selected.subject) }}>
+                  {titleCase(selected.subject)}
+                </div>
+                <div className="text-base font-semibold">{titleCase(selected.topic)}</div>
+              </div>
+              <button onClick={() => setSelectedId(null)} className="text-xs opacity-60 hover:opacity-100" aria-label="Close">✕</button>
+            </div>
+            <div className="mt-3">
+              <div className="mb-1 flex justify-between text-xs" style={{ color: "#aab4c3" }}>
+                <span>{BANDS.find((b) => b.band === bandFor(selected.strength))!.label}</span>
+                <span>{Math.round(selected.strength * 100)}%</span>
+              </div>
+              <div className="h-1.5 w-full rounded-full" style={{ background: "#1f2630" }}>
+                <div className="h-1.5 rounded-full" style={{ width: `${Math.round(selected.strength * 100)}%`, background: colorFor(selected.subject) }} />
+              </div>
+            </div>
+            <dl className="mt-3 grid grid-cols-3 gap-2 text-xs">
+              <div><dt style={{ color: "#8b95a5" }}>Reviews</dt><dd className="font-semibold">{selected.reviews ?? 0}</dd></div>
+              <div><dt style={{ color: "#8b95a5" }}>Last seen</dt><dd className="font-semibold">{fmtDate(selected.last_reviewed)}</dd></div>
+              <div><dt style={{ color: "#8b95a5" }}>Next review</dt><dd className="font-semibold">{fmtDate(selected.sm2_next_review_date)}</dd></div>
+            </dl>
+            {selected.state && selected.state !== "active" ? (
+              <div className="mt-2 text-xs" style={{ color: STATE_COLOR[selected.state] ?? "#aab4c3" }}>State: {selected.state}</div>
+            ) : null}
+            {selected.summary ? <p className="mt-3 text-xs leading-relaxed" style={{ color: "#c9d1dc" }}>{selected.summary}</p> : null}
+            <div className="mt-3">
+              <div className="mb-1 text-xs font-semibold" style={{ color: "#aab4c3" }}>Connections</div>
+              {connections.length ? (
+                <ul className="space-y-1 text-xs">
+                  {connections.map((c, i) => (
+                    <li key={i}>
+                      <span style={{ color: RELATION_COLOR[c.relation] ?? "#aab4c3" }}>{c.text}</span>{" "}
+                      <button className="underline decoration-dotted hover:opacity-80" onClick={() => setSelectedId(c.other.id)}>
+                        {titleCase(c.other.topic)}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="text-xs" style={{ color: "#8b95a5" }}>No links yet — they form as you study related topics.</div>
+              )}
+            </div>
+          </div>
+        ) : null}
+
+        <div className="pointer-events-none absolute bottom-2 left-3 text-[10px]" style={{ color: "#5c6573" }}>
+          click a topic for details · drag to rearrange · scroll to zoom
+        </div>
       </div>
-      <style>{`.mg-tooltip b{display:block;margin-bottom:2px}.mg-tooltip .meta{color:#8b95a5;font-size:11px}`}</style>
+
+      {/* Legend + how this student learns, below the canvas so nothing covers topics */}
+      <div
+        className="flex flex-wrap items-start gap-x-6 gap-y-2 px-4 py-3 text-[11px]"
+        style={{ borderTop: "1px solid #1f2630", color: "#aab4c3" }}
+      >
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+          <span>Closer to centre = stronger</span>
+          <span>Bigger dot = reviewed more</span>
+          {Object.entries(RELATION_COLOR).map(([rel, c]) => (
+            <span key={rel} className="flex items-center gap-1.5">
+              <svg width="18" height="6"><line x1="0" y1="3" x2="18" y2="3" stroke={c} strokeWidth="2" strokeDasharray={rel === "analogy" ? "4 3" : undefined} /></svg>
+              {rel === "prerequisite" ? "needs (→ prerequisite)" : rel === "application" ? "applies" : "is like"}
+            </span>
+          ))}
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ border: "2px solid #ef476f" }} />
+            weak spot
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5 md:ml-auto">
+          <span className="font-semibold" style={{ color: "#e7ecf3" }}>How {studentName.split(" ")[0]} learns:</span>
+          {learnerPrefs.length ? (
+            learnerPrefs.map((p) => (
+              <span
+                key={p.type}
+                className="rounded-full px-2 py-0.5"
+                style={{ background: `rgba(244,197,66,${0.08 + p.confidence * 0.2})`, color: "#f4e3a8" }}
+                title={`${Math.round(p.confidence * 100)}% confident`}
+              >
+                {p.label}
+              </span>
+            ))
+          ) : (
+            <span style={{ color: "#8b95a5" }}>picked up automatically as they chat</span>
+          )}
+          <span className="ml-2" style={{ color: "#8b95a5" }}>
+            {atoms.length} topics · {bonds.length} links · {weakSet.size} weak spot{weakSet.size === 1 ? "" : "s"}
+          </span>
+        </div>
+      </div>
+
+      <style>{`
+        .mg-tooltip b{display:block;margin-bottom:2px}
+        .mg-tooltip .meta{color:#8b95a5;font-size:11px}
+        @keyframes mg-pulse{0%{stroke-opacity:.9;stroke-width:2}70%{stroke-opacity:0;stroke-width:9}100%{stroke-opacity:0}}
+        .mg-pulse{animation:mg-pulse 1.8s ease-out infinite}
+      `}</style>
     </div>
   );
 }

@@ -2,7 +2,7 @@
  * LAMA — /api/health  (GET)
  *
  * Open http://localhost:5173/api/health in your browser to verify your .env:
- *   - which LLM provider was detected (gemini / claude / nvidia)
+ *   - which Ollama endpoint and model are configured
  *   - whether a real test call to the LLM succeeds
  *   - whether Supabase env vars are present
  *
@@ -17,10 +17,9 @@ export const Route = createFileRoute("/api/health")({
       GET: async () => {
         const report: Record<string, unknown> = {
           env: {
-            GEMINI_API_KEY: process.env.GEMINI_API_KEY ? "set" : "MISSING",
-            ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ? "set" : "MISSING",
-            NVIDIA_API_KEY: process.env.NVIDIA_API_KEY ? "set" : "MISSING",
-            AI_PROVIDER: process.env.AI_PROVIDER || "(auto-detect)",
+            OLLAMA_BASE_URL: process.env.OLLAMA_BASE_URL || "(default) http://localhost:11434",
+            OLLAMA_API_KEY: process.env.OLLAMA_API_KEY ? "set" : "not set",
+            OLLAMA_MODEL: process.env.OLLAMA_MODEL || "(default) gpt-oss:120b",
             SUPABASE_URL: process.env.SUPABASE_URL ? "set" : "MISSING",
             SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY
               ? "set"
@@ -31,7 +30,7 @@ export const Route = createFileRoute("/api/health")({
         try {
           const { getAIProvider } = await import("@/lib/ai-gateway.server");
           const provider = await getAIProvider();
-          report.provider = { name: provider.name, model: provider.modelId };
+          report.provider = { name: provider.name, model: provider.modelId, baseURL: provider.baseURL };
 
           // Live test call — proves the key + model actually work.
           const { generateText } = await import("ai");

@@ -4,10 +4,7 @@ import { useSuspenseQuery } from "@tanstack/react-query";
 import { queryOptions } from "@tanstack/react-query";
 import { useChat } from "@ai-sdk/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkMath from "remark-math";
-import remarkGfm from "remark-gfm";
-import rehypeKatex from "rehype-katex";
+import { ChatMarkdown } from "@/components/ChatMarkdown";
 import { ArrowLeft, ArrowUp, Brain, Compass, FlaskConical, Sparkles, Workflow, Languages } from "lucide-react";
 import { getMessages, getStudent } from "@/lib/tutor.functions";
 import { TopBar } from "@/components/TopBar";
@@ -71,7 +68,7 @@ function ChatPage() {
   const inputRef = useRef(null);
   const scrollRef = useRef(null);
 
-  // Auto-resize textarea like Gemini/Claude
+  // Auto-resize textarea
   const resizeTextarea = useCallback(() => {
     const el = inputRef.current;
     if (!el) return;
@@ -134,7 +131,7 @@ function ChatPage() {
             <span className="mt-0.5">⚠️</span>
             <div>
               <div className="font-semibold">LAMA couldn't respond</div>
-              <div className="text-xs opacity-80">{error.message || "An error occurred. Make sure your .env has a valid LLM key: GEMINI_API_KEY, ANTHROPIC_API_KEY, or NVIDIA_API_KEY"}</div>
+              <div className="text-xs opacity-80">{error.message || "An error occurred. Check the Ollama settings in .env: OLLAMA_BASE_URL, OLLAMA_MODEL and (for Ollama Cloud) OLLAMA_API_KEY"}</div>
             </div>
           </div>
         )}
@@ -155,7 +152,7 @@ function ChatPage() {
           )}
         </div>
 
-        {/* Composer — Gemini/Claude style auto-expanding */}
+        {/* Composer — auto-expanding */}
         <div className="mt-3 rounded-2xl border border-border bg-card/60 transition-shadow focus-within:border-primary/50 focus-within:shadow-md">
           <textarea
             ref={inputRef}
@@ -276,23 +273,7 @@ function MessageBubble({ message }) {
         {isUser ? (
           <div className="whitespace-pre-wrap text-sm">{text}</div>
         ) : (
-          <div className="prose-tutor text-sm">
-            <ReactMarkdown
-              remarkPlugins={[remarkMath, remarkGfm]}
-              rehypePlugins={[rehypeKatex]}
-              components={{
-                img: ({ src, alt, ...props }) => (
-                  <img
-                    src={src}
-                    alt={alt || "diagram"}
-                    className="my-3 max-w-full rounded-lg border border-border"
-                    loading="lazy"
-                    {...props}
-                  />
-                ),
-              }}
-            >{text || "…"}</ReactMarkdown>
-          </div>
+          <ChatMarkdown text={text || "…"} />
         )}
       </div>
     </div>

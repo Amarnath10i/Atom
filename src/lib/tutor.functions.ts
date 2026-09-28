@@ -31,7 +31,7 @@ export const getDashboard = createServerFn({ method: "GET" })
   .handler(async ({ data }) => {
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const sid = data.studentId;
-    const [student, atoms, bonds, weak, plan, refl, threads] = await Promise.all([
+    const [student, atoms, bonds, weak, plan, refl, threads, patterns] = await Promise.all([
       supabaseAdmin.from("students").select("*").eq("id", sid).maybeSingle(),
       supabaseAdmin.from("memory_atoms").select("*").eq("student_id", sid),
       supabaseAdmin.from("memory_bonds").select("*").eq("student_id", sid),
@@ -39,6 +39,7 @@ export const getDashboard = createServerFn({ method: "GET" })
       supabaseAdmin.from("plan_items").select("*").eq("student_id", sid).order("week"),
       supabaseAdmin.from("reflections").select("*").eq("student_id", sid).order("created_at", { ascending: false }).limit(10),
       supabaseAdmin.from("threads").select("*").eq("student_id", sid).order("updated_at", { ascending: false }),
+      supabaseAdmin.from("pattern_atoms" as never).select("pattern_type, description, confidence").eq("student_id", sid).order("confidence", { ascending: false }),
     ]);
     return {
       student: student.data,
@@ -48,6 +49,7 @@ export const getDashboard = createServerFn({ method: "GET" })
       plan: plan.data ?? [],
       reflections: refl.data ?? [],
       threads: threads.data ?? [],
+      patterns: (patterns.data ?? []) as unknown as { pattern_type: string; description: string | null; confidence: number }[],
     };
   });
 

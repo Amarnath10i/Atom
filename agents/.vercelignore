@@ -1,0 +1,8 @@
+__pycache__/
+.venv/
+.env
+Dockerfile
+Procfile
+runtime.txt
+requirements-nemo.txt
+guardrails_config/

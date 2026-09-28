@@ -1,5 +1,5 @@
 """Curator Agent — cleans, merges, prunes atoms; proposes new bonds.
-Powered by Claude (or Gemini fallback). All keys read from .env."""
+Powered by Ollama. Endpoint and model read from .env."""
 from __future__ import annotations
 from typing import Any
 from . import llm

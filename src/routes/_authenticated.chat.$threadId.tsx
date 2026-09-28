@@ -2,24 +2,19 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useChat } from "@ai-sdk/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkMath from "remark-math";
-import remarkGfm from "remark-gfm";
-import rehypeKatex from "rehype-katex";
+import { ChatMarkdown } from "@/components/ChatMarkdown";
 import { ArrowUp, Brain, Languages, Plus, Sparkles, X } from "lucide-react";
 import { getMe } from "@/lib/auth.functions";
 import { getMessages, getThread } from "@/lib/tutor.functions";
 
 /**
- * /chat/:threadId — main Gemini/Claude-style chat surface.
+ * /chat/:threadId — main chat surface.
  *
  * Features wired in this file:
- *   • Model switcher (Gemini ↔ Claude) — sent as `provider` in /api/chat body.
  *   • Attachment (+) button — text files inlined, others noted by filename.
  *   • Composer keeps focus; Enter sends, Shift+Enter newline.
  *
- * Silent multi-key rotation (5 Gemini + 5 Claude) is handled server-side in
- * `src/lib/ai-gateway.server.ts` — no UI surface needed.
+ * The model (Ollama) is chosen server-side in `src/lib/ai-gateway.server.ts`.
  */
 export const Route = createFileRoute("/_authenticated/chat/$threadId")({
   ssr: false,
@@ -38,7 +33,6 @@ export const Route = createFileRoute("/_authenticated/chat/$threadId")({
   ),
 });
 
-type ModelName = "gemini" | "claude";
 type Attachment = {
   name: string;
   size: number;
@@ -52,9 +46,6 @@ function ChatView() {
   const { threadId } = Route.useParams();
   const { student, stored, thread } = Route.useLoaderData();
   const [language, setLanguage] = useState(student.language ?? "english");
-
-  // Fixed to Gemini (model switcher removed from the UI).
-  const model: ModelName = "gemini";
 
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -77,7 +68,7 @@ function ChatView() {
     id: threadId,
     api: "/api/chat",
     initialMessages,
-    body: { studentId: student.id, threadId, language, provider: model },
+    body: { studentId: student.id, threadId, language },
     onError: (e) => console.error("[chat]", e),
   });
 
@@ -358,29 +349,13 @@ function MessageBubble({ message }) {
         className={
           isUser
             ? "max-w-[85%] rounded-2xl bg-primary px-4 py-2.5 text-sm text-primary-foreground"
-            : "max-w-[85%] text-sm leading-relaxed text-foreground"
+            : "w-full text-foreground"
         }
       >
         {isUser ? (
           <div className="whitespace-pre-wrap">{text}</div>
         ) : (
-          <div className="prose prose-sm dark:prose-invert max-w-none">
-            <ReactMarkdown
-              remarkPlugins={[remarkMath, remarkGfm]}
-              rehypePlugins={[rehypeKatex]}
-              components={{
-                img: ({ src, alt, ...props }) => (
-                  <img
-                    src={src}
-                    alt={alt || "diagram"}
-                    className="my-3 max-w-full rounded-lg border border-border"
-                    loading="lazy"
-                    {...props}
-                  />
-                ),
-              }}
-            >{text}</ReactMarkdown>
-          </div>
+          <ChatMarkdown text={text} />
         )}
       </div>
     </div>

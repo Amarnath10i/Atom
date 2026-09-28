@@ -7,6 +7,7 @@
     "dev": "concurrently \"vite dev\" \"python -m uvicorn agents.main:app --port 8787 --reload\"",
     "build": "vite build",
     "build:dev": "vite build --mode development",
+    "start": "node .output/server/index.mjs",
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write .",
@@ -14,8 +15,6 @@
     "setup": "npm install && node scripts/setup-db.js"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^1.0.0",
-    "@ai-sdk/google": "^1.0.0",
     "@ai-sdk/openai": "1.0.17",
     "@ai-sdk/react": "1.2.12",
     "@hookform/resolvers": "^5.2.2",
@@ -46,6 +45,7 @@
     "@radix-ui/react-toggle-group": "^1.1.11",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@supabase/supabase-js": "^2.108.1",
+    "@tailwindcss/typography": "^0.5.20",
     "@tailwindcss/vite": "^4.2.1",
     "@tanstack/react-query": "^5.83.0",
     "@tanstack/react-router": "^1.168.25",
@@ -96,6 +96,7 @@
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^15.15.0",
+    "nitro": "^3.0.260603-beta",
     "prettier": "^3.7.3",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.56.1",

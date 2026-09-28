@@ -1,0 +1,4 @@
+# Optional: only needed for SAFETY_MODE=nemo. Needs a C++ toolchain and Python < 3.13.
+# Without it the agents service falls back to the built-in regex guard.
+-r requirements.txt
+nemoguardrails==0.10.1

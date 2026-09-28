@@ -17,10 +17,9 @@ export function getServerConfig() {
     supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
 
     // LLM
-    geminiApiKey: process.env.GEMINI_API_KEY,
-    anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-    geminiModel: process.env.GEMINI_MODEL ?? "gemini-1.5-flash",
-    claudeModel: process.env.CLAUDE_MODEL ?? "claude-sonnet-4-20250514",
+    ollamaBaseUrl: process.env.OLLAMA_BASE_URL ?? "http://localhost:11434",
+    ollamaApiKey: process.env.OLLAMA_API_KEY,
+    ollamaModel: process.env.OLLAMA_MODEL ?? "gpt-oss:120b",
 
     // Safety mode: "builtin" (default) or "nemo"
     safetyMode: process.env.SAFETY_MODE ?? "builtin",
@@ -33,8 +32,8 @@ export function assertServerConfig() {
   const missing: string[] = [];
   if (!cfg.supabaseUrl) missing.push("SUPABASE_URL");
   if (!cfg.supabaseServiceRoleKey) missing.push("SUPABASE_SERVICE_ROLE_KEY");
-  if (!cfg.geminiApiKey && !cfg.anthropicApiKey) {
-    missing.push("GEMINI_API_KEY or ANTHROPIC_API_KEY");
+  if (cfg.ollamaBaseUrl.includes("ollama.com") && !cfg.ollamaApiKey) {
+    missing.push("OLLAMA_API_KEY");
   }
   if (missing.length) {
     throw new Error(

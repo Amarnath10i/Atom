@@ -86,10 +86,10 @@ export const getMyArchitecture = createServerFn({ method: "GET" })
       .eq("auth_user_id", uid)
       .maybeSingle();
     if (!student) {
-      return { student: null, atoms: [], bonds: [], weak: [], reflections: [] };
+      return { student: null, atoms: [], bonds: [], weak: [], reflections: [], patterns: [] };
     }
     const sid = student.id;
-    const [atoms, bonds, weak, refl] = await Promise.all([
+    const [atoms, bonds, weak, refl, patterns] = await Promise.all([
       supabaseAdmin.from("memory_atoms").select("*").eq("student_id", sid),
       supabaseAdmin.from("memory_bonds").select("*").eq("student_id", sid),
       supabaseAdmin
@@ -103,6 +103,11 @@ export const getMyArchitecture = createServerFn({ method: "GET" })
         .eq("student_id", sid)
         .order("created_at", { ascending: false })
         .limit(10),
+      supabaseAdmin
+        .from("pattern_atoms" as never) // not in the generated types yet
+        .select("pattern_type, description, confidence")
+        .eq("student_id", sid)
+        .order("confidence", { ascending: false }),
     ]);
     return {
       student,
@@ -110,6 +115,7 @@ export const getMyArchitecture = createServerFn({ method: "GET" })
       bonds: bonds.data ?? [],
       weak: weak.data ?? [],
       reflections: refl.data ?? [],
+      patterns: (patterns.data ?? []) as unknown as { pattern_type: string; description: string | null; confidence: number }[],
     };
   });
 

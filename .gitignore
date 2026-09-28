@@ -39,3 +39,6 @@ dist-ssr
 # Python
 __pycache__/
 *.pyc
+
+# Vercel / Nitro build output
+.vercel

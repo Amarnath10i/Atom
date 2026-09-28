@@ -2,7 +2,7 @@
 ### Multi-Agent JEE / NEET Tutor
 
 > Five specialist AI agents over a persistent molecular memory graph.  
-> Gemini or Claude. Zero hardcoded keys. Runs in VS Code in 5 minutes.
+> Runs on Ollama (local or Ollama Cloud). Zero hardcoded keys. Runs in VS Code in 5 minutes.
 
 ---
 
@@ -11,7 +11,7 @@
 ### Requirements
 - Node.js 20+ — check with `node --version`
 - A free [Supabase](https://supabase.com) account
-- At least one API key: **Gemini** (free) or **Claude**
+- [Ollama](https://ollama.com) installed locally, or an Ollama Cloud API key
 
 ---
 
@@ -42,12 +42,10 @@ SUPABASE_SERVICE_ROLE_KEY=eyJ...         # service_role key (keep secret)
 VITE_SUPABASE_URL=https://xxxxxxxxxxxx.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=eyJ...     # same as anon key above
 
-# ── LLM — set ONE (or both; Gemini is used first) ─────────────────────────────
-# Free Gemini key: https://aistudio.google.com → Get API key
-GEMINI_API_KEY=AIzaSy...
-
-# OR Claude key: https://console.anthropic.com → API keys
-ANTHROPIC_API_KEY=sk-ant-...
+# ── LLM — Ollama ──────────────────────────────────────────────────────────────
+OLLAMA_BASE_URL=http://localhost:11434   # or https://ollama.com for Ollama Cloud
+OLLAMA_API_KEY=                          # only needed for Ollama Cloud
+OLLAMA_MODEL=gpt-oss:120b                # any model your Ollama can serve
 ```
 
 **Where to find Supabase keys:**
@@ -85,6 +83,41 @@ Open **http://localhost:3000** — you'll see the landing page. Create an accoun
 
 ---
 
+## 🚀 Deploy
+
+Live: **https://theatom.vercel.app** (web) and **https://atom-agents.vercel.app** (agents).
+
+Two Vercel projects plus Supabase for data and Ollama Cloud for the LLM:
+
+| Part | Where | Deploy with |
+|---|---|---|
+| Web app (TanStack Start via Nitro) | Vercel project `atom`, repo root | `npx vercel deploy --prod` from the repo root |
+| Python agents (FastAPI) | Vercel project `atom-agents`, `agents/` folder | `npx vercel deploy --prod` from `agents/` |
+| Database + auth | Supabase | `npm run setup` (runs `supabase/migrations`) |
+
+Environment variables (Vercel → Project → Settings → Environment Variables):
+
+| Variable | `atom` | `atom-agents` |
+|---|---|---|
+| `OLLAMA_BASE_URL` = `https://ollama.com` | ✓ | ✓ |
+| `OLLAMA_API_KEY` (ollama.com/settings/keys) | ✓ | ✓ |
+| `OLLAMA_MODEL` = `gpt-oss:120b` | ✓ | ✓ |
+| `AGENTS_TOKEN` (same random string on both) | ✓ | ✓ |
+| `AGENTS_URL` = `https://atom-agents.vercel.app` | ✓ | |
+| `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SERVICE_ROLE_KEY` | ✓ | |
+| `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` (public, baked in at build) | ✓ | |
+| `ADMIN_PASSWORD` | ✓ | |
+
+In Supabase → Authentication → URL Configuration, the **Site URL** is `https://theatom.vercel.app`.
+
+`https://theatom.vercel.app/api/health` reports which settings are present and makes a live LLM call.
+
+**Alternative for the agents:** `agents/Dockerfile` + `railway.json` deploy them to Railway (or any Docker host) instead; point `AGENTS_URL` at that URL.
+
+To run the production build locally: `npm run build && npm start` (port 3000).
+
+---
+
 ## 🏗 Architecture
 
 ```
@@ -97,7 +130,7 @@ POST /api/chat  (streaming SSE)
   │
   ├─ [NemoGuard]   Regex safety pass — blocks harmful content
   ├─ [Curator]     Loads top-20 LAMA atoms from Supabase
-  ├─ [LLM]         Gemini 1.5 Flash  OR  Claude (from .env — no hardcoding)
+  ├─ [LLM]         Ollama — local or Ollama Cloud (from .env — no hardcoding)
   │    └─ tool calls ──────────────────────────────────────────────────────────
   │         diagnose_weakness  → writes to weak_topics table
   │         generate_practice  → returns NCERT-aligned question scaffold
@@ -135,31 +168,17 @@ Supabase Postgres (LAMA memory)
 ## 🔑 Model Selection (via `.env` only)
 
 ```env
-# Use Gemini (default — free tier available)
-GEMINI_API_KEY=AIzaSy...
-GEMINI_MODEL=gemini-1.5-flash          # or: gemini-1.5-pro, gemini-2.0-flash-exp
+# Local Ollama (default)
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=qwen3:8b                  # anything from `ollama list`
 
-# Switch to Claude (comment out GEMINI_API_KEY)
-ANTHROPIC_API_KEY=sk-ant-...
-CLAUDE_MODEL=claude-haiku-4-5-20251001  # or: claude-sonnet-4-20250514
+# Ollama Cloud (needed when deployed)
+OLLAMA_BASE_URL=https://ollama.com
+OLLAMA_API_KEY=...                     # https://ollama.com/settings/keys
+OLLAMA_MODEL=gpt-oss:120b              # a cloud model name, without ":cloud"
 ```
 
 No code changes needed — just edit `.env` and restart `npm run dev`.
-
----
-
-## Using NVIDIA NIM (optional)
-
-**Swap to NVIDIA Nemotron (2-line change in `ai-gateway.server.ts`):**
-```typescript
-// Add this branch before the gemini check:
-if (process.env.NVIDIA_API_KEY) {
-  const { createOpenAI } = await import("@ai-sdk/openai");
-  const nim = createOpenAI({ baseURL: "https://integrate.api.nvidia.com/v1", apiKey: process.env.NVIDIA_API_KEY });
-  return { name: "gemini", model: nim("nvidia/llama-3.1-nemotron-70b-instruct") };
-}
-```
-Then add `NVIDIA_API_KEY=nvapi-...` to `.env`.
 
 ---
 
@@ -170,7 +189,7 @@ Then add `NVIDIA_API_KEY=nvapi-...` to `.env`.
 scripts/setup-db.js                   ← node scripts/setup-db.js
 supabase/migrations/*.sql             ← full database schema
 
-src/lib/ai-gateway.server.ts          ← Gemini / Claude / Nemotron switcher
+src/lib/ai-gateway.server.ts          ← Ollama model setup
 src/lib/config.server.ts              ← env var helpers + validation
 src/routes/api/chat.ts                ← 5-agent streaming POST handler  ← main logic
 src/routes/index.tsx                  ← landing page

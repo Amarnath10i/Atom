@@ -1,9 +1,5 @@
 {
-  "outputDirectory": "dist",
-  "rewrites": [
-    {
-      "source": "/api/agents/(.*)",
-      "destination": "/api/index.py"
-    }
-  ]
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "npm ci",
+  "buildCommand": "npm run build"
 }

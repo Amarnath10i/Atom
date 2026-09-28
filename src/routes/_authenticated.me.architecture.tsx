@@ -141,6 +141,9 @@ function MyArchitecture() {
                 ["physics", "chemistry", "maths", "biology"].includes(a.subject?.toLowerCase())
               )}
               bonds={data.bonds}
+              studentName={s.name}
+              weakTopics={data.weak}
+              patterns={data.patterns}
               className={graphFullscreen ? "h-full" : undefined}
             />
           </div>

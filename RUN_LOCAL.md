@@ -21,10 +21,7 @@ The Node side calls the Python side over HTTP. If Python is down the app keeps w
 | **Supabase account** | free tier is enough | https://supabase.com |
 | **LLM API key** | one of the three below | — |
 
-**LLM options (one is enough):**
-- 🟢 **Google Gemini** — free key at https://aistudio.google.com/apikey
-- 🔵 **Anthropic Claude** — key at https://console.anthropic.com
-- 🟠 **NVIDIA NIM** — key at https://build.nvidia.com (optional)
+**LLM:** [Ollama](https://ollama.com). Locally, install it and pull a model (e.g. `ollama pull qwen3:8b`). For deployed use, an Ollama Cloud API key from https://ollama.com/settings/keys.
 
 ---
 
@@ -56,10 +53,9 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 VITE_SUPABASE_URL=https://YOUR_PROJECT_ID.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=your_anon_key
 
-# Pick ONE LLM:
-GEMINI_API_KEY=your_gemini_key
-# ANTHROPIC_API_KEY=your_anthropic_key
-# NVIDIA_API_KEY=your_nvidia_key
+# Ollama (local daemon by default):
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=qwen3:8b
 ```
 
 Leave everything else at its defaults for now.
@@ -160,7 +156,7 @@ uvicorn agents.main:app --port 8787 --host 0.0.0.0 --reload
 
 Confirm it's running — visit http://localhost:8787/health, you should see:
 ```json
-{"ok": true, "llm": "gemini", "embeddings": "gemini", "safety_mode": "builtin", ...}
+{"ok": true, "llm": "ollama:qwen3:8b", "embeddings": "hash-fallback", "safety_mode": "builtin", ...}
 ```
 
 **Terminal B — Frontend:**
@@ -214,7 +210,7 @@ accumulating silently.
 | Symptom | Fix |
 |---------|-----|
 | `npm run setup` says "SUPABASE_URL not set" | `.env` has `YOUR_PROJECT_ID` placeholder — replace with real value |
-| `No LLM API key found` | Fill in at least one of `GEMINI_API_KEY / ANTHROPIC_API_KEY / NVIDIA_API_KEY` in `.env` |
+| Chat errors / `llm_test` fails in `/api/health` | Check Ollama is running (`ollama list`) and `OLLAMA_MODEL` is a model you have; for Ollama Cloud set `OLLAMA_API_KEY` |
 | Agents health check shows `"llm": "none"` | Python `.env` not found — run the agents service from the project root, not from `agents/` |
 | Port 3000 already in use | Edit `vite.config.ts` → change `port: 3000` to any free port |
 | Port 8787 already in use | Add `AGENTS_URL=http://localhost:9000` to `.env` and change `--port 8787` to `--port 9000` in the start command |

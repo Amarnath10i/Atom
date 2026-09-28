@@ -4,7 +4,7 @@
  *
  * 5-agent agentic loop:
  *   NemoGuard safety → Curator (memory retrieval) → Diagnostic → Planner →
- *   LLM (Gemini or Claude via .env) → Critic/Reflector
+ *   LLM (Ollama, configured via .env) → Critic/Reflector
  *
  * No hardcoded API keys — everything read from .env at request time.
  */
@@ -14,6 +14,13 @@ import { z } from "zod";
 import { getAIProvider } from "@/lib/ai-gateway.server";
 import { calculateSM2 } from "@/lib/learning-os.functions";
 import { JEE_WEIGHTAGE, NEET_WEIGHTAGE } from "@/lib/exam-weightage";
+import {
+  PREFERENCE_TYPES,
+  findFocusAtoms,
+  focusNeighbourhoodText,
+  knowledgeMapText,
+  learningProfileText,
+} from "@/lib/memory-map";
 
 type ChatMessage = { role: "user" | "assistant" | "system"; content: string };
 
@@ -22,7 +29,6 @@ type Body = {
   studentId?: string;
   threadId?: string;
   language?: "english" | "hinglish";
-  provider?: "gemini" | "claude" | "nvidia";
 };
 
 // ── NemoGuard-style built-in safety regex ─────────────────────────────────────
@@ -89,11 +95,10 @@ export const Route = createFileRoute("/api/chat")({
         const studentId: string = body.studentId;
         const threadId: string = body.threadId;
 
-        // ── Resolve LLM provider from .env (no hardcoded keys) ─────────────
-        // UI may pass `provider: "gemini" | "claude"` to override per request.
+        // ── Resolve the Ollama model from .env (no hardcoded keys) ─────────
         let provider;
         try {
-          provider = await getAIProvider(body.provider);
+          provider = await getAIProvider();
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : String(e);
           return new Response(
@@ -194,7 +199,7 @@ export const Route = createFileRoute("/api/chat")({
         }
 
         // ── Agent 1: Curator — load memory context ──────────────────────────
-        const [{ data: student }, { data: atoms }, { data: weak }, { data: plan }, { data: patterns }] =
+        const [{ data: student }, { data: atoms }, { data: weak }, { data: plan }, { data: patterns }, { data: bonds }] =
           await Promise.all([
             supabaseAdmin
               .from("students")
@@ -225,7 +230,13 @@ export const Route = createFileRoute("/api/chat")({
               .eq("student_id", studentId)
               .gt("confidence", 0.6)
               .order("confidence", { ascending: false })
-              .limit(5),
+              .limit(12),
+            supabaseAdmin
+              .from("memory_bonds")
+              .select("source_atom, target_atom, relation, weight")
+              .eq("student_id", studentId)
+              .order("weight", { ascending: false })
+              .limit(40),
           ]);
 
         const lang = body.language ?? student?.language ?? "english";
@@ -259,6 +270,9 @@ export const Route = createFileRoute("/api/chat")({
         };
 
         const memorySummary = [
+          "CURRENT FOCUS (where this question sits in their graph — use it to set depth):",
+          focusNeighbourhoodText(findFocusAtoms(lastText ?? "", atoms ?? [], relevantAtoms), atoms ?? [], bonds ?? []),
+          "",
           "RECENTLY STUDIED:",
           ...(recentAtoms.length ? recentAtoms.map(formatAtom) : ["(none)"]),
           "",
@@ -267,6 +281,9 @@ export const Route = createFileRoute("/api/chat")({
           "",
           "DUE FOR REVIEW (SM-2):",
           ...(dueAtoms.length ? dueAtoms.map(formatAtom) : ["(none)"]),
+          "",
+          "KNOWLEDGE MAP (mastery by subject and how topics connect):",
+          knowledgeMapText(atoms ?? [], bonds ?? []),
         ].join("\n");
 
         // Only assert a safety layer that is actually running.
@@ -279,13 +296,7 @@ export const Route = createFileRoute("/api/chat")({
 
         // ── System prompt: Tutor agent orchestrating all sub-agents ─────────
         const system = `You are **LAMA** — the Layered Atomic Memory Architecture — acting as a personal JEE/NEET tutor.
-You are running on the ${
-  provider.name === "nvidia"
-    ? `NVIDIA Nemotron (${provider.modelId})`
-    : provider.name === "gemini"
-    ? "Google Gemini"
-    : "Anthropic Claude"
-} LLM. ${safetyLine}
+You are running on the ${provider.modelId} model via Ollama. ${safetyLine}
 
 STUDENT PROFILE
 - Name: ${student?.name ?? "Student"}
@@ -302,9 +313,13 @@ ${
     .join("\n") || "(none detected yet)"
 }
 
+HOW THIS STUDENT LIKES TO LEARN (learned from past sessions — follow these)
+${learningProfileText(patterns ?? [])}
+
 META-COGNITIVE PROFILE (Thinking Patterns)
 ${
   (patterns ?? [])
+    .filter((p) => !PREFERENCE_TYPES.includes(p.pattern_type))
     .map((p) => `- ${p.pattern_type} (conf: ${(p.confidence * 100).toFixed(0)}%): ${p.description}`)
     .join("\n") || "(no strong patterns detected yet)"
 }
@@ -337,16 +352,22 @@ RULES
 - CLARIFY FIRST, THEN EXTEND THE FIELD. Always fully resolve the student's actual question/doubt before anything else — make sure the current concept is genuinely clear. THEN, as a natural continuation, broaden the discussion into ONE closely-related concept that bridges the previous topic and this question, widening their view of the field (e.g. "...and this same idea is exactly what powers $X$", "...which is why $Y$ behaves the same way"). The extension should grow organically out of what was just discussed — connecting a known topic to an adjacent one.
 - NEVER announce this as a recommendation or a syllabus instruction. Do NOT say "your next topic is...", "you should now study...", "the next topic is...", or list topics to cover. The new concept must appear as a seamless continuation of the same train of thought, not as a labelled "next step". Keep the extension brief — a bridge, not a second lecture.
 - Reference past LAMA atoms when explaining ("You struggled with this last session, let's fix it.").
+- Adapt to the student, not a fixed template: set the depth from CURRENT FOCUS (weak topic → basics first; mastered → faster and harder), follow HOW THIS STUDENT LIKES TO LEARN, and if they ask for something different in this message (simpler, shorter, with pictures), do that.
+- Use the KNOWLEDGE MAP: anchor new ideas in topics the student has Mastered, and if the question depends on a topic listed under "Needs work" (or one it "needs"), briefly shore up that prerequisite first. When you extend into a related concept, prefer one connected to what they are studying in the map.
 - Be warm, specific, and India-aware: NCERT chapters, JEE/NEET pattern, Hindi-medium friendly.
-- Format every answer with clear structure: a short intro, then numbered **steps** with bold headings, then a final boxed answer line.
-- ALWAYS write math in LaTeX with proper delimiters: inline as $...$ and display/block equations as $$...$$ on their own line. Never write raw symbols like "x^2" or "alpha" outside math delimiters. Example: $\alpha + (\alpha+2) = -(n+1)$ inline, and
-  $$\sum_{k=1}^{n} k = \frac{n(n+1)}{2}$$
-  as a display equation. The frontend renders KaTeX, so well-formed LaTeX appears beautifully.
-- Use markdown headings (##), **bold key terms**, numbered lists, and tables when helpful.
-- When the student asks for a diagram, drawing, or visual explanation, generate ASCII diagrams, markdown tables, or use Mermaid-compatible syntax wrapped in code blocks. If the concept benefits from a visual (circuit diagrams, free-body diagrams, organic structures, biological cycles), proactively include one.
+- Only state facts you are sure of and that match NCERT. If unsure of a number or detail, leave it out rather than guess.
 - When the student uploads an image or PDF, READ IT — describe what you see and solve the question shown.
 - Call tools naturally — don't narrate tool calls to the student.
-- Keep responses focused: long enough to teach, short enough to hold attention.
+
+HOW TO WRITE (this matters as much as the content)
+- Write like a good human tutor talking to the student: natural sentences and short paragraphs, the way a thoughtful teacher explains at a desk. Not like a textbook outline or slide deck.
+- Match length to the question. A greeting or quick question gets one to three sentences. A concept explanation is a few well-organised paragraphs. Only a genuinely long topic gets a couple of short "###" section headings.
+- Use formatting only when it genuinely helps: a numbered list for real sequential steps (e.g. solving a problem), a table only when comparing several items across the same few attributes (every row must fill every column; for a list of parts and what they do, use a bulleted list instead), **bold** sparingly for the key term being defined. Most of the reply should be plain paragraphs.
+- Do not use emojis, decorative separators ("---"), "Quick Recap", "Boxed Summary" or "Key Takeaways" sections. Do not end with a \\boxed{} line unless you are giving the final numerical answer to a problem.
+- Math: inline as $...$ and display equations as $$...$$ on their own line. Never use \\( \\) or \\[ \\]. Never write raw symbols like "x^2" or "alpha" outside math delimiters. Example: the range is $R = \\frac{u^2 \\sin 2\\theta}{g}$.
+- Pictures: when a diagram or photo would help (anatomy, PV diagrams, circuits, apparatus, biological cycles, structures) or the student asks for images, call search_images with 2-3 plain keywords (e.g. "frog internal anatomy", "human heart", "isothermal process"; at most 3 searches per reply), pick the one or two results whose titles best match, and embed them where they belong in the explanation with markdown: ![short caption](url). Use only URLs returned by search_images; never invent image URLs. You cannot see the images, only their titles: refer to them in general terms ("the diagram above shows the heart's chambers") and never invent point labels, letters or colours they might contain.
+- Never draw ASCII-art diagrams and never write Mermaid code; use search_images instead, or describe it in words if nothing suitable is found.
+- End naturally. A short, specific follow-up question is fine sometimes; don't end every reply with a menu of options.
 - Never give medical/legal advice.
 - You have NemoGuard safety active: do not generate harmful content.
 
@@ -399,6 +420,26 @@ Do NOT create atoms for non-academic topics like greetings, AI capabilities, or 
               },
             }),
 
+            // Web image search (Wikimedia Commons) for real diagrams and photos.
+            search_images: tool({
+              description:
+                "Search the web for real diagrams, photos or illustrations to show the student (anatomy, PV diagrams, circuits, apparatus, structures, cycles). Returns image titles and URLs. Use short English search terms, e.g. 'frog anatomy', 'Carnot cycle PV diagram'.",
+              parameters: z.object({
+                query: z.string().describe("Short English search terms"),
+              }),
+              execute: async ({ query }) => {
+                try {
+                  const { searchImages } = await import("@/lib/image-search.server");
+                  const images = await searchImages(query, 5);
+                  return images.length
+                    ? { images }
+                    : { images: [], note: "No images found. Try simpler or different search terms." };
+                } catch (e) {
+                  return { images: [], note: `Image search unavailable: ${e instanceof Error ? e.message : String(e)}` };
+                }
+              },
+            }),
+
             // Agent 3: Content Curator
             generate_practice: tool({
               description:
@@ -448,7 +489,7 @@ Do NOT create atoms for non-academic topics like greetings, AI capabilities, or 
             // Agent 5: Critic / Reflector (LAMA memory writer)
             reflect_session: tool({
               description:
-                "Critic/Reflector Agent: store a session reflection, reinforce or create a memory atom, and build a bond in the LAMA graph.",
+                "Critic/Reflector Agent: store a session reflection and reinforce or create a memory atom in the LAMA graph.",
               parameters: z.object({
                 summary: z.string(),
                 atom_subject: z.string(),
@@ -521,65 +562,9 @@ Do NOT create atoms for non-academic topics like greetings, AI capabilities, or 
                   atomsAdded = 1;
                 }
 
-                // Bond to same-subject atoms (build a rich LAMA molecular graph)
-                const { data: sameSubjectAtoms } = await supabaseAdmin
-                  .from("memory_atoms")
-                  .select("id, topic, strength")
-                  .eq("student_id", studentId)
-                  .eq("subject", atomSubject)
-                  .neq("id", atomId)
-                  .order("last_reviewed", { ascending: false })
-                  .limit(5);
-
-                let bondsAdded = 0;
-                for (const related of (sameSubjectAtoms ?? [])) {
-                  // Don't duplicate existing bonds
-                  const { data: existingBond } = await supabaseAdmin
-                    .from("memory_bonds")
-                    .select("id")
-                    .eq("student_id", studentId)
-                    .or(`and(source_atom.eq.${atomId},target_atom.eq.${related.id}),and(source_atom.eq.${related.id},target_atom.eq.${atomId})`)
-                    .limit(1);
-                  if (existingBond && existingBond.length > 0) continue;
-
-                  const bondWeight = 0.3 + Math.min(0.5, args.strength_delta * 0.5);
-                  await supabaseAdmin.from("memory_bonds").insert({
-                    student_id: studentId,
-                    source_atom: atomId,
-                    target_atom: related.id,
-                    relation: "topic-link",
-                    weight: Math.max(0.1, Math.min(1, bondWeight)),
-                  });
-                  bondsAdded++;
-                }
-
-                // Also bond to most recently reviewed atom from OTHER subjects (cross-subject bonds)
-                const { data: crossSubjectRecent } = await supabaseAdmin
-                  .from("memory_atoms")
-                  .select("id")
-                  .eq("student_id", studentId)
-                  .neq("id", atomId)
-                  .neq("subject", atomSubject)
-                  .order("last_reviewed", { ascending: false })
-                  .limit(1);
-                if (crossSubjectRecent?.[0]) {
-                  const { data: existingCross } = await supabaseAdmin
-                    .from("memory_bonds")
-                    .select("id")
-                    .eq("student_id", studentId)
-                    .or(`and(source_atom.eq.${atomId},target_atom.eq.${crossSubjectRecent[0].id}),and(source_atom.eq.${crossSubjectRecent[0].id},target_atom.eq.${atomId})`)
-                    .limit(1);
-                  if (!existingCross || existingCross.length === 0) {
-                    await supabaseAdmin.from("memory_bonds").insert({
-                      student_id: studentId,
-                      source_atom: atomId,
-                      target_atom: crossSubjectRecent[0].id,
-                      relation: "session-link",
-                      weight: 0.3,
-                    });
-                    bondsAdded++;
-                  }
-                }
+                // Meaningful bonds are added by the post-reply atom extraction
+                // (it knows the student's existing topics); none are guessed here.
+                const bondsAdded = 0;
 
                 await supabaseAdmin.from("reflections").insert({
                   student_id: studentId,
@@ -611,23 +596,58 @@ Do NOT create atoms for non-academic topics like greetings, AI capabilities, or 
             // ── Auto memory-atom extraction (no hardcoding — LLM derives it) ──
             try {
               const { generateText } = await import("ai");
+              const { linkAtom, LINKS_INSTRUCTIONS } = await import("@/lib/memory-bonds.server");
+              const { data: knownAtoms } = await supabaseAdmin
+                .from("memory_atoms")
+                .select("subject, topic")
+                .eq("student_id", studentId)
+                .order("last_reviewed", { ascending: false })
+                .limit(60);
+              const knownList = (knownAtoms ?? []).map((a) => `- ${a.subject}: ${a.topic}`).join("\n") || "(none yet)";
               const { text: rawJson } = await generateText({
                 model: provider.model,
                 system:
                   "Extract one JEE/NEET knowledge atom from the exchange. Reply with STRICT JSON only " +
                   "(no markdown fences) of shape: " +
-                  '{"subject":"Physics|Chemistry|Maths|Biology","topic":"<short JEE/NEET topic>","summary":"<1-2 sentence learning summary>","strength_delta":<number between -0.2 and 0.2>}. ' +
+                  '{"subject":"Physics|Chemistry|Maths|Biology","topic":"<short JEE/NEET topic>","summary":"<1-2 sentence learning summary>","strength_delta":<number between -0.2 and 0.2>, ' +
+                  LINKS_INSTRUCTIONS + ', "preferences": [] or a list of ' + PREFERENCE_TYPES.join("|") +
+                  " naming ONLY learning preferences the student clearly showed in THIS message (e.g. asked for images → prefers_visuals, " +
+                  'said "explain simply" or seemed lost in jargon → prefers_simple_language, asked why/for a derivation → prefers_derivations)}. ' +
+                  "If the exchange is about a topic already in the student's list, reuse that exact topic name. " +
                   "IMPORTANT: subject MUST be exactly Physics, Chemistry, Maths, or Biology. " +
-                  "If the conversation is not about any of these subjects, respond with {\"subject\":\"skip\"}. " +
+                  "If the conversation is not about any of these subjects, respond with {\"subject\":\"skip\",\"preferences\":[...]} (preferences still apply). " +
                   "The topic must be a real JEE/NEET syllabus topic (e.g. Kinematics, Organic Chemistry, Calculus, Human Physiology). " +
                   "Do NOT create atoms for general conversation, AI capabilities, greetings, etc. " +
                   "Pick strength_delta based on whether the student showed mastery (positive) or struggled (negative).",
-                prompt: `STUDENT QUERY:\n${lastText}\n\nTUTOR RESPONSE:\n${text}`,
+                prompt: `STUDENT'S EXISTING TOPICS:\n${knownList}\n\nSTUDENT QUERY:\n${lastText}\n\nTUTOR RESPONSE:\n${text}`,
               });
               const cleaned = rawJson.trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
               const atom = JSON.parse(cleaned) as {
                 subject: string; topic: string; summary: string; strength_delta: number;
+                links?: { topic: string; relation: string; weight?: number }[];
+                preferences?: string[];
               };
+
+              // Learning preferences are recorded even for non-academic turns
+              // ("keep it short", "show me pictures"). Repeats raise confidence.
+              for (const pref of new Set((atom?.preferences ?? []).filter((p) => PREFERENCE_TYPES.includes(p)))) {
+                const { data: prev } = await supabaseAdmin.from("pattern_atoms")
+                  .select("id, confidence, occurrences").eq("student_id", studentId).eq("pattern_type", pref).maybeSingle();
+                if (prev) {
+                  await supabaseAdmin.from("pattern_atoms").update({
+                    confidence: Math.min(0.95, prev.confidence + 0.1),
+                    occurrences: prev.occurrences + 1,
+                    last_updated: new Date().toISOString(),
+                  } as never).eq("id", prev.id);
+                } else {
+                  await supabaseAdmin.from("pattern_atoms").insert({
+                    student_id: studentId,
+                    pattern_type: pref,
+                    description: `Showed ${pref.replace("prefers_", "a preference for ").replace(/_/g, " ")}`,
+                    confidence: 0.65,
+                  } as never);
+                }
+              }
               // Skip if subject is invalid
               if (atom?.subject === "skip" || !atom?.subject) throw new Error("Non-academic conversation");
               if (atom?.subject && atom?.topic && atom?.summary) {
@@ -662,9 +682,10 @@ Do NOT create atoms for non-academic topics like greetings, AI capabilities, or 
                     sm2_repetitions: sm2.repetitions,
                     sm2_next_review_date: sm2.nextReviewDate
                   } as never).eq("id", existing.id);
+                  await linkAtom(supabaseAdmin, studentId, existing.id, atom.links);
                 } else {
                   const sm2 = calculateSM2(delta > 0 ? 4 : 3);
-                  await supabaseAdmin.from("memory_atoms").insert({
+                  const { data: created } = await supabaseAdmin.from("memory_atoms").insert({
                     student_id: studentId,
                     subject: subject,      // ← normalised
                     topic: topic,          // ← normalised
@@ -674,7 +695,8 @@ Do NOT create atoms for non-academic topics like greetings, AI capabilities, or 
                     sm2_interval: sm2.interval,
                     sm2_repetitions: sm2.repetitions,
                     sm2_next_review_date: sm2.nextReviewDate
-                  } as never);
+                  } as never).select("id").single();
+                  if (created) await linkAtom(supabaseAdmin, studentId, created.id, atom.links);
                 }
                 } // end VALID_SUBJECTS guard
               }
@@ -682,13 +704,15 @@ Do NOT create atoms for non-academic topics like greetings, AI capabilities, or 
               console.warn("[chat] atom auto-extract failed", e);
             }
 
+            // Transcript + atoms shared by the state-inference and orchestrator steps below.
+            const [{ data: atomsAll }, { data: msgs }] = await Promise.all([
+              supabaseAdmin.from("memory_atoms").select("*").eq("student_id", studentId),
+              supabaseAdmin.from("messages").select("role,content")
+                .eq("thread_id", threadId).order("created_at", { ascending: true }).limit(40),
+            ]);
+
             // ── State Inference Agent: re-label atoms based on transcript ──
             try {
-              const [{ data: atomsAll }, { data: msgs }] = await Promise.all([
-                supabaseAdmin.from("memory_atoms").select("*").eq("student_id", studentId),
-                supabaseAdmin.from("messages").select("role,content")
-                  .eq("thread_id", threadId).order("created_at", { ascending: true }).limit(40),
-              ]);
               const stateRes = await agents.state(msgs ?? [], atomsAll ?? []);
               for (const u of (stateRes.updates ?? []) as Array<{ atom_id: string; state: string; reason?: string }>) {
                 if (!u.atom_id || !u.state) continue;

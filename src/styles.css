@@ -2,6 +2,7 @@
 @source "../src";
 @import "tw-animate-css";
 @import "katex/dist/katex.min.css";
+@plugin "@tailwindcss/typography";
 
 @custom-variant dark (&:is(.dark *));
 

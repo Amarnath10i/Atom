@@ -1,16 +1,15 @@
-FROM python:3.11-slim
+# Build from the repository root:  docker build -f agents/Dockerfile .
+FROM python:3.12-slim
 
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 
-# Install dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY agents/requirements.txt agents/requirements.txt
+RUN pip install --no-cache-dir -r agents/requirements.txt
 
-# Copy agent code
-COPY . .
+COPY agents ./agents
 
-# Expose port
+# Railway, Fly and most PaaS hosts inject PORT.
+ENV PORT=8080
 EXPOSE 8080
-
-# Start the FastAPI service
-CMD ["uvicorn", "agents.main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["sh", "-c", "uvicorn agents.main:app --host 0.0.0.0 --port ${PORT}"]

@@ -110,9 +110,9 @@ function Dashboard() {
                 <Brain className="h-4 w-4 text-primary" />
                 <h2 className="font-display text-lg font-semibold">LAMA memory graph</h2>
               </div>
-              <span className="text-xs text-muted-foreground">node size = strength · edge color = bond weight</span>
+              <span className="text-xs text-muted-foreground">closer = stronger · click a topic for details</span>
             </div>
-            <MemoryGraph atoms={data.atoms as any} bonds={data.bonds as any} />
+            <MemoryGraph atoms={data.atoms as any} bonds={data.bonds as any} studentName={s.name} weakTopics={data.weak as any} patterns={data.patterns as any} />
           </section>
 
           {/* Threads */}

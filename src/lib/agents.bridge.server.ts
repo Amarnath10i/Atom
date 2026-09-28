@@ -17,7 +17,10 @@ async function post<T>(path: string, body: unknown, fallback: T): Promise<T & { 
   try {
     const r = await fetch(`${BASE}${path}`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        ...(process.env.AGENTS_TOKEN ? { "x-agents-token": process.env.AGENTS_TOKEN } : {}),
+      },
       body: JSON.stringify(body ?? {}),
       signal: ctrl.signal,
     });
