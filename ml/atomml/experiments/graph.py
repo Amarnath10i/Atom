@@ -8,14 +8,19 @@ predict how they do on it, beyond their own history with it.
 
 Base: LightGBM on the transferable features without any topic evidence.
 Then, one at a time, the student's earlier attempts and accuracy on the
-exercise's neighbours under:
+exercise's neighbours under four graphs of equal density (the curated
+tree's, about 8 links per exercise), so no graph wins by seeing more:
 
 * tree: Junyi's curated topic tree (exercises sharing a level-4 group)
-* atom-bonds: Atom's own rule, cosine >= 0.45 between 384-d multilingual
-  sentence embeddings of the exercise names (paraphrase-multilingual-MiniLM)
-* random: as many random neighbours per exercise as atom-bonds has (control)
-* learned: for each exercise, the 10 exercises whose earlier accuracy best
-  predicts it among training students (correlation of per-student accuracy)
+* embedding_knn: Atom's semantic bonds made usable, each exercise linked to
+  the names most similar by 384-d multilingual sentence embeddings
+  (paraphrase-multilingual-MiniLM)
+* random: random links (control)
+* learned: the exercises whose earlier accuracy best predicts this one among
+  training students (correlation of per-student accuracy)
+
+Atom's literal rule (cosine >= 0.45) is reported, not expanded: on these
+names it links 70% of all pairs, i.e. nearly the student's whole history.
 
 Each graph's gain is a paired AUC difference against the base on the same
 test attempts, with a student-level bootstrap.
@@ -65,6 +70,15 @@ def embedding_graph() -> tuple[Graph, np.ndarray]:
     sim = emb @ emb.T
     r, c = np.nonzero(sim >= BOND_MIN_SIM)
     return Graph("atom_bonds", _csr(r, c, len(emb))), sim
+
+
+def knn_graph(sim: np.ndarray, k: int) -> Graph:
+    """Each exercise linked to its k most similar names: Atom's semantic bonds
+    at the density of the curated tree (the 0.45 threshold links 70% of pairs)."""
+    s = sim.copy()
+    np.fill_diagonal(s, -np.inf)
+    cols = np.argsort(-s, axis=1)[:, :k]
+    return Graph("embedding_knn", _csr(np.repeat(np.arange(len(s)), k), cols.ravel(), len(s)))
 
 
 def random_graph(like: Graph, seed: int = 0) -> Graph:
@@ -127,7 +141,9 @@ def run() -> str:
     p_base = _fit_predict(x_base, base_cols)
 
     bonds, sim = embedding_graph()
-    graphs = [tree_graph(), bonds, random_graph(bonds), learned_graph()]
+    tree = tree_graph()
+    k = int(round(np.diff(tree.adj.indptr).mean()))  # every graph tested at the tree's density
+    graphs = [tree, knn_graph(sim, k), random_graph(tree), learned_graph(k)]
     rows = [{"evidence added": "none (base)", "links per exercise": "-", "AUC": f"{score(y, p_base, users, n_boot=1).auc[0]:.4f}",
              "gain over base": "-"}]  # fmt: skip
     for g in graphs:
@@ -143,9 +159,11 @@ def run() -> str:
                      "gain over base": f"{d[0]:+.4f} ({d[1]:+.4f} to {d[2]:+.4f})"})  # fmt: skip
         log.info("%s: %+.4f", g.name, d[0])
 
-    # how much do Atom-style bonds agree with the curated tree?
-    tree = graphs[0].adj
-    overlap = bonds.adj.multiply(tree).sum() / max(bonds.adj.sum(), 1)
+    # how dense is Atom's own rule, and how much of it agrees with the curated tree?
+    n_items = sim.shape[0]
+    pair_share = bonds.adj.nnz / (n_items * (n_items - 1))
+    overlap = bonds.adj.multiply(tree.adj).sum() / max(bonds.adj.sum(), 1)
+    knn_overlap = graphs[1].adj.multiply(tree.adj).sum() / max(graphs[1].adj.sum(), 1)
     sims = sim[np.triu_indices_from(sim, 1)]
     text = "\n".join(
         [
@@ -157,9 +175,21 @@ def run() -> str:
             "",
             pd.DataFrame(rows).to_markdown(index=False),
             "",
-            f"Atom's bond rule (cosine >= {BOND_MIN_SIM}) links {bonds.adj.nnz:,} exercise pairs; "
-            f"{overlap:.1%} of them fall inside a curated topic group. Name embeddings: median pairwise cosine "
-            f"{np.median(sims):.2f}, 90th percentile {np.quantile(sims, 0.9):.2f}.",
+            f"Every graph is tested at the curated tree's density ({k} links per exercise), so a gain cannot "
+            "come from simply seeing more of the student's history.",
+            "",
+            "## Atom's own bond rule",
+            "",
+            f"Atom links two topics when the cosine similarity of their 384-d text embeddings is at least "
+            f"{BOND_MIN_SIM}. On these exercise names (multilingual MiniLM, the same size as Atom's vectors) that rule "
+            f"links {pair_share:.0%} of all pairs: {np.diff(bonds.adj.indptr).mean():.0f} neighbours per exercise "
+            f"out of {n_items - 1:,}. Median pairwise cosine is {np.median(sims):.2f} (90th percentile "
+            f"{np.quantile(sims, 0.9):.2f}): sentence-embedding spaces are anisotropic, so a fixed threshold that "
+            "looks selective links nearly everything, and the \"neighbours\" are most of the student's history, "
+            f"which the base model already summarizes as overall accuracy. Only {overlap:.1%} of its links fall "
+            f"inside a curated topic group, against {knn_overlap:.1%} for the {k}-nearest-neighbour version tested "
+            "above. In the deployed app there is no embedding model at all (Ollama Cloud serves none), so the "
+            "vectors are hashes of the text and the similarities are noise.",
             "",
         ]
     )  # fmt: skip
