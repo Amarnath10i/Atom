@@ -1164,6 +1164,71 @@ export const getMistakePatterns = createServerFn({ method: "GET" })
 // PHASE 4 — Mock test outcome tracking
 // ─────────────────────────────────────────────────────────────────────────────
 
+const topicKey = (subject: string, topic: string) => `${subject.toLowerCase()}|||${topic.toLowerCase()}`;
+
+/**
+ * Store a test's answered questions and ask the learned student model
+ * (agents/student_model.py, evaluated in ml/reports/knowledge_tracing.md) for
+ * every practised topic's mastery: the probability of a right answer to a
+ * medium question on it, now. Returns {} when the model is unavailable, and
+ * the caller falls back to the old rule.
+ */
+async function recordAttemptsAndPredict(
+  db: any,
+  sid: string,
+  mockTestId: string,
+  answered: { subject: string; topic: string; difficulty: number; correct: boolean; timeTakenSec: number }[],
+): Promise<Record<string, import("@/lib/agents.bridge.server").TopicMastery>> {
+  const { agents } = await import("@/lib/agents.bridge.server");
+  const { data: atomUnits } = await db.from("memory_atoms").select("subject, topic, exam_unit").eq("student_id", sid);
+  const unitOf = new Map<string, string | null>(
+    (atomUnits ?? []).map((a: any) => [topicKey(a.subject, a.topic), a.exam_unit ?? null]),
+  );
+  // The test ends now; each answer is placed by the time spent on the ones after it.
+  let t = Date.now();
+  const rows = [...answered].reverse().map((q) => {
+    const answeredAt = new Date(t).toISOString();
+    t -= Math.max(1, q.timeTakenSec) * 1000;
+    return {
+      student_id: sid,
+      subject: q.subject,
+      topic: q.topic,
+      exam_unit: unitOf.get(topicKey(q.subject, q.topic)) ?? null,
+      difficulty: Math.round(q.difficulty),
+      correct: q.correct,
+      time_sec: q.timeTakenSec,
+      source: "mock_test",
+      mock_test_id: mockTestId,
+      answered_at: answeredAt,
+    };
+  }).reverse();
+  const { error } = await db.from("question_attempts").insert(rows);
+  if (error) {
+    console.warn(`[student-model] could not store answers: ${error.message}`);
+    return {};
+  }
+  const { data: history } = await db
+    .from("question_attempts")
+    .select("subject, topic, exam_unit, difficulty, correct, time_sec, answered_at")
+    .eq("student_id", sid)
+    .order("answered_at", { ascending: false })
+    .limit(5000);
+  const res = await agents.studentMastery(
+    (history ?? []).reverse().map((h: any) => ({
+      topic: topicKey(h.subject, h.topic),
+      unit: h.exam_unit ? topicKey(h.subject, h.exam_unit) : null,
+      difficulty: h.difficulty,
+      correct: h.correct,
+      time_sec: h.time_sec,
+      answered_at: h.answered_at,
+    })),
+    // a moment after the test, so every answer just given counts as history
+    new Date(Date.now() + 15 * 60_000).toISOString(),
+  );
+  if (!res.available) console.warn("[student-model] unavailable; using the rule-based mastery update");
+  return res.available ? res.topics : {};
+}
+
 export const recordMockTest = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((i: unknown) =>
@@ -1233,7 +1298,12 @@ export const recordMockTest = createServerFn({ method: "POST" })
       event_type: "simulation",
     });
 
-    // ── 3. Process per-question data to update atom graph ───────────────────
+    // ── 3. Keep every answered question; ask the learned student model ──────
+    // Unanswered questions are skipped, not wrong, so they are not stored.
+    const answered = data.questions.filter((q) => q.selectedOption !== "");
+    const learned = answered.length > 0 ? await recordAttemptsAndPredict(supabaseAdmin, sid, row.id, answered) : {};
+
+    // ── 3b. Process per-question data to update atom graph ──────────────────
     if (data.questions.length > 0) {
 
       // Group questions by (subject, topic) and tally performance
@@ -1303,11 +1373,22 @@ export const recordMockTest = createServerFn({ method: "POST" })
         const lookupKey = `${t.subject.toLowerCase()}|||${t.topic.toLowerCase()}`;
         const existing = atomIndex[lookupKey];
 
+        // The learned model's mastery when it is available; the old rule otherwise.
+        const lm = learned[lookupKey];
+        const modelFields = lm
+          ? {
+              mastery_source: "model",
+              half_life_days: lm.half_life_days,
+              next_review_at: new Date(Date.now() + lm.review_in_days * 86_400_000).toISOString(),
+            }
+          : {};
+
         if (existing) {
           // Update existing atom
-          const newStrength = Math.max(0.05, Math.min(0.98, existing.strength + delta));
+          const newStrength = lm ? lm.mastery : Math.max(0.05, Math.min(0.98, existing.strength + delta));
           const newState = newStrength < 0.4 ? "stuck" : newStrength < 0.65 ? "active" : "active";
           await supabaseAdmin.from("memory_atoms").update({
+            ...modelFields,
             strength: newStrength,
             reviews: existing.reviews + 1,
             last_reviewed: new Date().toISOString(),
@@ -1316,8 +1397,9 @@ export const recordMockTest = createServerFn({ method: "POST" })
           }).eq("id", existing.id);
         } else {
           // Create new atom seeded from exam performance
-          const initStrength = Math.max(0.05, Math.min(0.5, 0.35 + delta));
+          const initStrength = lm ? lm.mastery : Math.max(0.05, Math.min(0.5, 0.35 + delta));
           await supabaseAdmin.from("memory_atoms").insert({
+            ...modelFields,
             student_id: sid,
             subject: t.subject,
             topic: t.topic,

@@ -13,6 +13,10 @@ export type MapAtom = {
   sm2_interval?: number | null;
   /** The student's learned memory_stability (1 = default forgetting speed). */
   stability_mul?: number | null;
+  /** 'model': strength is the learned student model's P(right answer), from graded answers. */
+  mastery_source?: string | null;
+  /** Learned half-life of recall for this topic (agents/student_model.py). */
+  half_life_days?: number | null;
 };
 export type MapBond = { source_atom: string; target_atom: string; relation?: string | null; weight?: number | null };
 
@@ -167,20 +171,29 @@ export function focusNeighbourhoodText(focus: MapAtom[], atoms: MapAtom[], bonds
 const DAY = 86_400_000;
 
 /**
- * Estimated chance the student can still recall a topic right now, using an
- * exponential forgetting curve R = e^(-t/S). Stability S grows with the SM-2
- * interval and with repeated reviews, so well-practised topics fade slowly,
- * scaled by the student's own learned memory stability.
+ * Estimated chance the student can still recall a topic right now.
+ *
+ * Topics with graded answers carry a half-life learned from maths practice
+ * (half-life regression, ml/reports/memory.md): R = 2^(-t/h). The others fall
+ * back to the earlier hand-set curve R = e^(-t/S), whose stability S grows
+ * with the SM-2 interval and reviews; on held-out data that curve forecast
+ * recall worse than the learned one.
  */
 export function recall(a: MapAtom, now = Date.now()): number {
   if (!a.last_reviewed) return 1;
   const days = Math.max(0, (now - new Date(a.last_reviewed).getTime()) / DAY);
+  if (a.half_life_days && a.half_life_days > 0) return 2 ** (-days / a.half_life_days);
   const stability = (Math.max(1, a.sm2_interval ?? 1) * 1.5 + (a.reviews ?? 0) * 2 + 3) * (a.stability_mul ?? 1);
   return Math.exp(-days / stability);
 }
 
-/** Mastery discounted by forgetting: what the student could show today. */
+/**
+ * What the student could show today. The learned model's mastery already is
+ * a probability of a right answer that accounts for time since practice, so
+ * it is used as is; the older estimates are discounted by forgetting.
+ */
 export function effectiveStrength(a: MapAtom, now = Date.now()): number {
+  if (a.mastery_source === "model") return a.strength;
   return a.strength * (0.55 + 0.45 * recall(a, now));
 }
 

@@ -69,4 +69,38 @@ export const agents = {
     post("/meta-cognitive/predict", { transcript, patterns }, { prediction: null }),
   metaCognitiveEvaluate: (actual_message: string, predicted_intent: string) =>
     post("/meta-cognitive/evaluate", { actual_message, predicted_intent }, { status: "ignored" }),
+  /** Learned mastery per topic from graded answers (agents/student_model.py). */
+  studentMastery: (attempts: StudentAttempt[], now?: string) =>
+    post<{ available: boolean; topics: Record<string, TopicMastery> }>(
+      "/student/mastery", { attempts, now }, { available: false, topics: {} }),
+  async studentModelCard() {
+    try {
+      const r = await fetch(`${BASE}/student/model-card`, {
+        headers: process.env.AGENTS_TOKEN ? { "x-agents-token": process.env.AGENTS_TOKEN } : {},
+        signal: AbortSignal.timeout(5_000),
+      });
+      return r.ok ? await r.json() : { available: false };
+    } catch {
+      return { available: false };
+    }
+  },
+};
+
+export type StudentAttempt = {
+  topic: string;
+  unit: string | null;
+  difficulty: number;
+  correct: boolean;
+  time_sec: number;
+  answered_at: string;
+};
+
+export type TopicMastery = {
+  unit: string | null;
+  mastery: number; // P(right answer to a medium question on this topic, now)
+  attempts: number;
+  accuracy: number;
+  recall: number;
+  half_life_days: number;
+  review_in_days: number;
 };
