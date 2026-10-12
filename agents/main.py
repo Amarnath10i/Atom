@@ -10,10 +10,13 @@ Endpoints (all POST unless noted):
   POST /nucleus/ingest  → embed + shells + bonds for one message
   POST /nucleus/search  → top-k similar atoms
   POST /nucleus/decay   → recency decay updates
+  POST /student/mastery → learned mastery and review timing per topic
+  GET  /student/model-card → how the student model was trained and evaluated
 
 Run:  uvicorn agents.main:app --host 0.0.0.0 --port 8787 --reload
 """
 from __future__ import annotations
+from datetime import datetime
 from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -26,7 +29,7 @@ load_dotenv()  # pull .env from cwd (project root when run from there)
 # Also try parent dir in case launched from agents/
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
-from . import guard, curator, diagnostic, planner, state_inference, nucleus, llm, question_gen, meta_cognitive
+from . import guard, curator, diagnostic, planner, state_inference, nucleus, llm, question_gen, meta_cognitive, student_model
 
 app = FastAPI(title="LAMA Agents", version="1.0.0")
 app.add_middleware(
@@ -163,6 +166,36 @@ def generate_questions_ep(body: QuestionGenIn):
         count=body.count,
         exclude_ids=body.exclude_ids
     )
+
+class AttemptIn(BaseModel):
+    topic: str
+    correct: bool
+    answered_at: datetime
+    unit: str | None = None
+    difficulty: int = 3
+    time_sec: float = 0.0
+
+
+class MasteryIn(BaseModel):
+    attempts: list[AttemptIn]
+    now: datetime | None = None
+
+
+@app.post("/student/mastery")
+def student_mastery_ep(body: MasteryIn):
+    model = student_model.model()
+    if model is None:
+        return {"available": False, "topics": {}}
+    history = [student_model.Attempt(topic=a.topic, correct=a.correct, at=a.answered_at, unit=a.unit,
+                                     difficulty=a.difficulty, time_sec=a.time_sec) for a in body.attempts]
+    return {"available": True, "topics": model.mastery(history, body.now)}
+
+
+@app.get("/student/model-card")
+def student_model_card_ep():
+    model = student_model.model()
+    return {"available": False} if model is None else {"available": True, **model.meta}
+
 
 if __name__ == "__main__":
     import uvicorn
