@@ -86,10 +86,11 @@ export const getMyArchitecture = createServerFn({ method: "GET" })
       .eq("auth_user_id", uid)
       .maybeSingle();
     if (!student) {
-      return { student: null, atoms: [], bonds: [], weak: [], reflections: [], patterns: [], misconceptions: [] };
+      return { student: null, atoms: [], bonds: [], weak: [], reflections: [], patterns: [], misconceptions: [], studentModel: { available: false } as const };
     }
     const sid = student.id;
-    const [atoms, bonds, weak, refl, patterns, misconceptions] = await Promise.all([
+    const { agents } = await import("@/lib/agents.bridge.server");
+    const [atoms, bonds, weak, refl, patterns, misconceptions, studentModel] = await Promise.all([
       supabaseAdmin.from("memory_atoms").select("*").eq("student_id", sid),
       supabaseAdmin.from("memory_bonds").select("*").eq("student_id", sid),
       supabaseAdmin
@@ -114,9 +115,11 @@ export const getMyArchitecture = createServerFn({ method: "GET" })
         .eq("student_id" as never, sid as never)
         .eq("category" as never, "misconception" as never)
         .is("resolved_at" as never, null),
+      agents.studentModelCard(),
     ]);
     return {
       student,
+      studentModel: studentModel as import("@/components/StudentModelCard").StudentModelCardData,
       atoms: atoms.data ?? [],
       bonds: bonds.data ?? [],
       weak: weak.data ?? [],

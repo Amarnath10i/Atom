@@ -5,6 +5,7 @@ import { createThread, updateThreadTitle } from "@/lib/tutor.functions";
 import { useChat } from "@ai-sdk/react";
 import { MemoryGraph } from "@/components/MemoryGraph";
 import { AtomStateBadge } from "@/components/AtomStateBadge";
+import { StudentModelCard } from "@/components/StudentModelCard";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import remarkGfm from "remark-gfm";
@@ -152,6 +153,8 @@ function MyArchitecture() {
           </div>
         )}
       </section>
+
+      <StudentModelCard card={data.studentModel} atoms={data.atoms} />
 
       {/* Atoms + weak topics */}
       <section className="mt-6 grid gap-4 md:grid-cols-2">
