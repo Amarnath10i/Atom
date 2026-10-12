@@ -22,6 +22,7 @@ from scipy.optimize import minimize
 
 LN2 = np.log(2.0)
 MIN_H, MAX_H = 15.0 / (24 * 60), 274.0  # half-life bounds from the paper, in days
+Z_GUARD = 20.0  # keeps 2^z finite while fitting; not a modelling bound
 
 
 def atom_recall(
@@ -49,14 +50,18 @@ class HLR:
         return np.exp2(z)
 
     def loss_and_grad(self, theta, x, p, delta, h_hat):
+        # Only a numerical guard here. Clipping z to the paper's half-life bounds
+        # inside the loss zeroes the gradient outside them; L-BFGS's first step
+        # then lands every row on that plateau and stops after one iteration.
+        # The bounds apply to predictions (half_life / predict) instead.
         z = x @ theta
-        inside = (z > np.log2(MIN_H)) & (z < np.log2(MAX_H))
-        h = np.exp2(np.clip(z, np.log2(MIN_H), np.log2(MAX_H)))
+        inside = np.abs(z) < Z_GUARD
+        h = np.exp2(np.clip(z, -Z_GUARD, Z_GUARD))
         p_hat = np.exp2(-delta / h)
         r_p, r_h = p_hat - p, h - h_hat
         n = len(p)
         loss = (np.sum(r_p**2) + self.alpha * np.sum(r_h**2)) / n + self.lam * theta @ theta / n
-        # d p_hat / dz = p_hat * ln2^2 * delta / h ;  d h / dz = h * ln2 ; zero where z is clipped
+        # d p_hat / dz = p_hat * ln2^2 * delta / h ;  d h / dz = h * ln2
         dz = (2 * r_p * p_hat * LN2**2 * delta / h + 2 * self.alpha * r_h * h * LN2) * inside
         grad = (x.T @ dz) / n + 2 * self.lam * theta / n
         return loss, grad

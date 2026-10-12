@@ -39,3 +39,26 @@ def test_atom_recall_formula():
     assert atom_recall(np.array([0.0]), np.array([0]))[0] == pytest.approx(1.0)
     # S = 1.5 + 2*2 + 3 = 8.5 days
     assert atom_recall(np.array([8.5]), np.array([2]))[0] == pytest.approx(np.exp(-1))
+
+
+def test_hlr_fit_does_not_stall_on_long_gaps():
+    """Months-long gaps and mostly-perfect recall, as in the Duolingo data: the
+    fit must move well away from its starting point (an earlier version clipped
+    the half-life inside the loss and stopped after one iteration)."""
+    rng = np.random.default_rng(2)
+    n = 50000
+    right = rng.integers(0, 30, n)
+    wrong = rng.integers(0, 5, n)
+    x = sp.csr_matrix(np.column_stack([np.ones(n), np.sqrt(1 + right), np.sqrt(1 + wrong)]))
+    theta_true = np.array([5.0, 0.6, -0.5])  # half-lives of months
+    delta = rng.exponential(2.0, n)  # gaps of days
+    # sessions of 1-4 attempts, so most observed recall is exactly 1 (as on Duolingo),
+    # which pins the implied half-life at its 274-day cap
+    k = rng.integers(1, 5, n)
+    p = rng.binomial(k, np.exp2(-delta / np.exp2(x @ theta_true))) / k
+    m = HLR(max_iter=500).fit(x, p, delta)
+    h_hat = implied_half_life(p, delta)
+    start, _ = m.loss_and_grad(np.zeros(3), x, p, delta, h_hat)
+    end, _ = m.loss_and_grad(m.theta, x, p, delta, h_hat)
+    assert (p == 1).mean() > 0.8  # the regime that broke the old fit
+    assert m.result.nit > 5 and end < start
