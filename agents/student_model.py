@@ -6,8 +6,10 @@ and recall curve (exp(-days / (1.5 + 2 * reviews + 3))). The model is a
 LightGBM classifier trained offline in ml/ (`uv run atomml export`) on Junyi
 Academy's 16M maths practice attempts, using only the signals Atom records,
 and evaluated on 14k students it never saw: ml/reports/knowledge_tracing.md.
-It is served here with NumPy (trees.py); the review schedule comes from a
-half-life regression fitted on the same maths practice (ml/reports/memory.md).
+It is served here with NumPy (trees.py). The review schedule comes from a
+half-life regression fitted on Duolingo's scheduled reviews, which reproduces
+the published results; on self-paced maths practice forgetting cannot be
+measured cleanly, because students choose when to return (ml/reports/memory.md).
 
 A Junyi exercise is a skill practised through many different problems, as an
 Atom topic is practised through many generated questions; Junyi's level-4

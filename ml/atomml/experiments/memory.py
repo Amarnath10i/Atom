@@ -147,7 +147,7 @@ def evaluate(df: pd.DataFrame, item_word: str, learners: bool):
     theta_base = None
     for words, with_learners, name in variants:
         x = design(df, tr, words, with_learners)
-        m = HLR().fit(x[tr], p[tr], delta[tr])
+        m = HLR(max_iter=1000).fit(x[tr], p[tr], delta[tr])
         log.info("%s: %d iterations, %s", name, m.result.nit, m.result.message)
         preds[name], half_lives[name] = m.predict(x[te], delta[te])
         if not words:
@@ -231,8 +231,20 @@ def run() -> str:
             "",
         ]
         if word == "exercise":
+            sections += [
+                "Every model that forgets with time ranks these sessions worse than chance (AUC below 0.5): "
+                "students who return to an exercise after a long gap do better, not worse. That is selection, not "
+                "memory: in a self-paced practice log, students come back quickly after struggling and much later "
+                "once they have moved on, so when they return depends on how well they know it. Forgetting cannot be "
+                "measured cleanly from such a log, and the review schedule Atom ships is not fitted on it.",
+                "",
+            ]
+        if word == "word":
+            # Scheduled reviews (Duolingo decides when a word comes back) are the cleaner
+            # evidence; this model replicates the paper's numbers, so it sets the schedule.
             params = {"half_life_theta": theta.tolist(), "features": ["bias", "sqrt(1+right)", "sqrt(1+wrong)"],
-                      "unit": "days", "source": "Junyi Academy maths practice, HLR fitted on training students"}  # fmt: skip
+                      "unit": "days", "source": "half-life regression fitted on Duolingo's scheduled reviews "
+                      "(practice history only); see ml/reports/memory.md"}  # fmt: skip
             settings.paths.reports.mkdir(parents=True, exist_ok=True)
             (settings.paths.reports / "memory_params.json").write_text(
                 json.dumps(params, indent=2) + "\n"

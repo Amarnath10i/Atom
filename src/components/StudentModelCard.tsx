@@ -90,7 +90,7 @@ export function StudentModelCard({ card, atoms }: { card: StudentModelCardData; 
       {due.length > 0 && (
         <div className="mt-5">
           <div className="mb-2 flex items-center gap-2 text-sm font-medium">
-            <CalendarClock className="h-4 w-4" /> Next reviews (when recall is predicted to fall to 90%)
+            <CalendarClock className="h-4 w-4" /> Next reviews (when recall is predicted to fall to 90%, from a forgetting curve fitted on 10M scheduled vocabulary reviews)
           </div>
           <ul className="grid gap-2 sm:grid-cols-2">
             {due.map((a) => (

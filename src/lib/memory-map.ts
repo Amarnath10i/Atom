@@ -173,11 +173,11 @@ const DAY = 86_400_000;
 /**
  * Estimated chance the student can still recall a topic right now.
  *
- * Topics with graded answers carry a half-life learned from maths practice
- * (half-life regression, ml/reports/memory.md): R = 2^(-t/h). The others fall
- * back to the earlier hand-set curve R = e^(-t/S), whose stability S grows
- * with the SM-2 interval and reviews; on held-out data that curve forecast
- * recall worse than the learned one.
+ * Topics with graded answers carry a learned half-life (half-life regression
+ * on Duolingo's scheduled reviews, ml/reports/memory.md): R = 2^(-t/h). The
+ * others fall back to the earlier hand-set curve R = e^(-t/S), whose stability
+ * S grows with the SM-2 interval and reviews; on held-out reviews that curve
+ * forecast recall worse than predicting the average.
  */
 export function recall(a: MapAtom, now = Date.now()): number {
   if (!a.last_reviewed) return 1;

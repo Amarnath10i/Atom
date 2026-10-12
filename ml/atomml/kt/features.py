@@ -50,7 +50,7 @@ def build(attempts: pd.DataFrame, items: pd.DataFrame, item_stats: pd.DataFrame,
     topic = items["level4"].to_numpy()[a["item"].to_numpy()]
     a = a.assign(topic=topic, wrong=1 - a["correct"].astype(np.int32), one=1,
                  hint_any=(a["hints"] > 0).astype(np.int32), retry=(a["tries"] > 1).astype(np.int32),
-                 log_sec=np.log1p(a["sec"].to_numpy(np.float32)))  # fmt: skip
+                 log_sec=np.log1p(a["sec"].to_numpy(np.float64)))  # fmt: skip
 
     if naive:
         # every earlier row in (user, ts, item, session, number) order is history
@@ -115,19 +115,19 @@ def build(attempts: pd.DataFrame, items: pd.DataFrame, item_stats: pd.DataFrame,
             + inb[["hint_any", "retry", "log_sec"]].to_numpy()
         )
         behav = pd.DataFrame(behav, columns=["hint_any", "retry", "log_sec"], index=a.index)
-        out["n_in_session"] = inb["one"].to_numpy(np.float32)
+        out["n_in_session"] = inb["one"].to_numpy(np.float64)
         out["acc_in_session"] = _smoothed(inb["correct"], inb["one"], 0.7, 2.0)
 
-    out["n_item"] = np.log1p(n_item.to_numpy(np.float32))
+    out["n_item"] = np.log1p(n_item.to_numpy(np.float64))
     out["acc_item"] = _smoothed(c_item, n_item, 0.7, 2.0)
-    out["n_topic"] = np.log1p(n_topic.to_numpy(np.float32))
+    out["n_topic"] = np.log1p(n_topic.to_numpy(np.float64))
     out["acc_topic"] = _smoothed(c_topic, n_topic, 0.7, 2.0)
-    out["n_all"] = np.log1p(n_all.to_numpy(np.float32))
+    out["n_all"] = np.log1p(n_all.to_numpy(np.float64))
     out["acc_all"] = _smoothed(c_all, n_all, 0.7, 5.0)
-    denom = np.maximum(n_all.to_numpy(np.float32), 1)
-    out["hint_rate"] = behav["hint_any"].to_numpy(np.float32) / denom
-    out["retry_rate"] = behav["retry"].to_numpy(np.float32) / denom
-    out["mean_log_sec"] = behav["log_sec"].to_numpy(np.float32) / denom
+    denom = np.maximum(n_all.to_numpy(np.float64), 1)
+    out["hint_rate"] = behav["hint_any"].to_numpy(np.float64) / denom
+    out["retry_rate"] = behav["retry"].to_numpy(np.float64) / denom
+    out["mean_log_sec"] = behav["log_sec"].to_numpy(np.float64) / denom
 
     # last visible attempt on this item: the previous row in (user, item) order is
     # either an earlier bucket or earlier in this item's session, both visible
@@ -136,35 +136,38 @@ def build(attempts: pd.DataFrame, items: pd.DataFrame, item_stats: pd.DataFrame,
         ["correct", "ts", "hints", "tries", "log_sec"]
     ].shift(1)
     prev = prev.reindex(a.index)
-    out["last_correct"] = prev["correct"].fillna(-1).to_numpy(np.float32)
+    out["last_correct"] = prev["correct"].fillna(-1).to_numpy(np.float64)
     out["last_hint"] = (
-        (prev["hints"] > 0).astype(np.float32).where(prev["hints"].notna(), -1).to_numpy(np.float32)
+        (prev["hints"] > 0).astype(np.float64).where(prev["hints"].notna(), -1).to_numpy(np.float64)
     )
     out["last_retry"] = (
-        (prev["tries"] > 1).astype(np.float32).where(prev["tries"].notna(), -1).to_numpy(np.float32)
+        (prev["tries"] > 1).astype(np.float64).where(prev["tries"].notna(), -1).to_numpy(np.float64)
     )
-    out["last_log_sec"] = prev["log_sec"].fillna(-1).to_numpy(np.float32)
-    gap = ((a["ts"] - prev["ts"]) / DAY).to_numpy(np.float32)
+    out["last_log_sec"] = prev["log_sec"].fillna(-1).to_numpy(np.float64)
+    gap = ((a["ts"] - prev["ts"]) / DAY).to_numpy(np.float64)
     out["log_days_item"] = np.where(np.isnan(gap), -1.0, np.log1p(np.maximum(gap, 0))).astype(
-        np.float32
+        np.float64
     )
 
     # population difficulty of the exercise (training students only) and its label
     st = item_stats.reindex(a["item"].to_numpy())
-    out["item_logit"] = st["item_logit"].to_numpy(np.float32)
-    out["item_n"] = np.log1p(st["n_train"].to_numpy(np.float32))
-    out["difficulty"] = items["difficulty"].to_numpy()[a["item"].to_numpy()].astype(np.float32)
+    out["item_logit"] = st["item_logit"].to_numpy(np.float64)
+    out["item_n"] = np.log1p(st["n_train"].to_numpy(np.float64))
+    out["difficulty"] = items["difficulty"].to_numpy()[a["item"].to_numpy()].astype(np.float64)
 
     for graph in graphs:
         n_nb, c_nb = neighbour_counts(a, graph, naive)
         out[f"n_nb_{graph.name}"] = np.log1p(n_nb)
         out[f"acc_nb_{graph.name}"] = _smoothed(pd.Series(c_nb), pd.Series(n_nb), 0.7, 2.0)
-    return out
+    # Computed in float64 and stored as float32, exactly as agents/student_model.py
+    # does; accumulating in float32 instead moved values by one rounding step,
+    # enough to cross a split threshold for 12% of served predictions.
+    return out.astype(np.float32)
 
 
 def _smoothed(correct: pd.Series, n: pd.Series, prior: float, strength: float) -> np.ndarray:
-    c = np.asarray(correct, dtype=np.float32)
-    m = np.asarray(n, dtype=np.float32)
+    c = np.asarray(correct, dtype=np.float64)
+    m = np.asarray(n, dtype=np.float64)
     return (c + prior * strength) / (m + strength)
 
 
@@ -197,8 +200,8 @@ def neighbour_counts(a: pd.DataFrame, graph: Graph, naive: bool) -> tuple[np.nda
     )
     cum = allv.groupby(["user", "item"], sort=False)[["one", "correct"]].cumsum()
     is_q = allv["q"].to_numpy() == 1
-    n_nb = np.empty(len(a), np.float32)
-    c_nb = np.empty(len(a), np.float32)
+    n_nb = np.empty(len(a), np.float64)
+    c_nb = np.empty(len(a), np.float64)
     rows = allv["row"].to_numpy()[is_q]
     n_nb[rows] = cum["one"].to_numpy()[is_q]
     c_nb[rows] = cum["correct"].to_numpy()[is_q]
