@@ -12,6 +12,7 @@ EXPERIMENTS = {
     "graph": "Does evidence from linked topics (Atom's bonds) improve predictions",
     "memory": "Forgetting curves on Duolingo's 13M review traces",
     "tutor": "Tutor reliability on JEEBench with self-consistency",
+    "keys": "How often LLM-generated answer keys are wrong, and what a self-check catches",
     "export": "Write the serving artifacts for Atom's agents service",
 }
 

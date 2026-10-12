@@ -151,9 +151,16 @@ class Client:
         key = os.getenv("OLLAMA_API_KEY") or _dotenv(REPO / ".env").get("OLLAMA_API_KEY")
         return cls(model, base_url.rstrip("/"), key, think)
 
-    def ask(self, text: str, temperature: float, seed: int) -> dict:
-        body = {"model": self.model, "messages": [{"role": "user", "content": text}], "stream": False,
-                "options": {"temperature": temperature, "seed": seed}}  # fmt: skip
+    def ask(self, text: str, temperature: float | None, seed: int, system: str | None = None,
+            json_mode: bool = False) -> dict:  # fmt: skip
+        """temperature None leaves the model's default, as the app's own calls do."""
+        messages = ([{"role": "system", "content": system}] if system else []) + [
+            {"role": "user", "content": text}
+        ]
+        options = {"seed": seed} | ({} if temperature is None else {"temperature": temperature})
+        body = {"model": self.model, "messages": messages, "stream": False, "options": options}
+        if json_mode:
+            body["format"] = "json"
         if self.think:
             body["think"] = self.think
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
