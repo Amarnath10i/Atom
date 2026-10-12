@@ -9,7 +9,7 @@
 
 Nothing hardcoded — all endpoints & model IDs from environment."""
 from __future__ import annotations
-import os, json, hashlib
+import os, json, hashlib, re
 from typing import Any
 
 import httpx
@@ -67,10 +67,52 @@ def chat(prompt: str, system: str | None = None, json_mode: bool = False) -> str
     return text
 
 
+# LaTeX commands that begin with a letter JSON treats as an escape (\b \f \n \r
+# \t \u): written with one backslash they still parse, but as a control
+# character ("\frac" -> form feed + "rac", "\theta" -> tab + "heta").
+_LATEX_ON_JSON_ESCAPES = frozenset("""
+    bar beta big bigg bigl bigr binom bm boldsymbol bot boxed bullet
+    flat forall frac frown
+    nabla ne neg neq newline ngeq ni nleq not nparallel nu
+    rangle rceil rfloor rho right rightarrow rm
+    tan tanh tau text textbf textit textrm tfrac therefore theta tilde times to top triangle
+    underbrace underline uparrow upsilon
+""".split())
+_ESCAPE = re.compile(r"\\\\|\\([A-Za-z]+|.)", re.DOTALL)
+
+
+def _repair_latex_escapes(raw: str) -> str:
+    """Make LaTeX inside JSON strings survive parsing: double every backslash
+    that starts an invalid JSON escape (\\alpha, \\sqrt, \\( ...) or a LaTeX
+    command that happens to start like a valid one (\\frac, \\theta ...)."""
+
+    def fix(m: re.Match) -> str:
+        if m.group(0) == "\\\\":
+            return m.group(0)
+        tok = m.group(1)
+        if tok[0].isalpha():
+            if tok[0] not in "bfnrtu":
+                return "\\\\" + tok  # \alpha, \sqrt: invalid escapes
+            if tok in _LATEX_ON_JSON_ESCAPES:
+                return "\\\\" + tok
+            if tok[0] == "u" and not re.match(r"u[0-9a-fA-F]{4}", tok + raw[m.end() : m.end() + 4]):
+                return "\\\\" + tok  # \u not followed by 4 hex digits
+            return m.group(0)  # a real escape such as "\nThe" (newline + The)
+        return m.group(0) if tok in "\"/" else "\\\\" + tok  # \( \[ \, are invalid escapes
+
+    return _ESCAPE.sub(fix, raw)
+
+
+def parse_json_lenient(raw: str) -> Any:
+    """json.loads for model output: tolerates LaTeX backslashes and literal
+    newlines or tabs inside strings."""
+    return json.loads(_repair_latex_escapes(raw), strict=False)
+
+
 def chat_json(prompt: str, system: str | None = None, default: Any = None) -> Any:
     try:
         raw = chat(prompt, system=system, json_mode=True)
-        return json.loads(raw)
+        return parse_json_lenient(raw)
     except Exception as e:
         print(f"[llm] json call failed: {e}")
         return default
