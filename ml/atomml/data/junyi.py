@@ -53,7 +53,9 @@ def _read_log() -> pd.DataFrame:
             "exercise_problem_repeat_session", "is_correct", "total_sec_taken",
             "total_attempt_cnt", "used_hint_cnt"]  # fmt: skip
     df = pd.read_csv(RAW / "Log_Problem.csv", usecols=cols, engine="pyarrow")
-    df["ts"] = pd.to_datetime(df["timestamp_TW"].str.removesuffix(" UTC"), format="%Y-%m-%d %H:%M:%S")
+    df["ts"] = pd.to_datetime(
+        df["timestamp_TW"].str.removesuffix(" UTC"), format="%Y-%m-%d %H:%M:%S"
+    )
     return df.drop(columns="timestamp_TW")
 
 
@@ -73,7 +75,10 @@ def load() -> Junyi:
             "difficulty": content["difficulty"].map(DIFFICULTY).fillna(1).astype("int8"),
             "stage": content["learning_stage"],
             # topic tree: level1 (broadest) .. level4 (finest group of exercises)
-            **{f"level{k}": pd.factorize(content[f"level{k}_id"])[0].astype("int32") for k in (1, 2, 3, 4)},
+            **{
+                f"level{k}": pd.factorize(content[f"level{k}_id"])[0].astype("int32")
+                for k in (1, 2, 3, 4)
+            },
         }
     )
     items.index.name = "item"
@@ -107,7 +112,9 @@ def load() -> Junyi:
     p = settings.protocol
     u = rng.random(len(user_codes))
     split = pd.Series(
-        np.where(u < p.train_share, "train", np.where(u < p.train_share + p.valid_share, "valid", "test")),
+        np.where(
+            u < p.train_share, "train", np.where(u < p.train_share + p.valid_share, "valid", "test")
+        ),
         name="split",
     )
     split.index.name = "user"

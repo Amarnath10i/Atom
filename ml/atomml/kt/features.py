@@ -70,17 +70,27 @@ def build(attempts: pd.DataFrame, items: pd.DataFrame, item_stats: pd.DataFrame,
                     hint_any=("hint_any", "sum"), retry=("retry", "sum"), log_sec=("log_sec", "sum"))
                .reset_index())  # fmt: skip
         # earlier buckets, all items
-        b = g.groupby(["user", "ts"], sort=False)[["one", "correct", "hint_any", "retry", "log_sec"]].sum().reset_index()
+        b = (
+            g.groupby(["user", "ts"], sort=False)[
+                ["one", "correct", "hint_any", "retry", "log_sec"]
+            ]
+            .sum()
+            .reset_index()
+        )
         b_prev = _prior_sums(b, ["user"], ["one", "correct", "hint_any", "retry", "log_sec"])
         b = pd.concat([b[["user", "ts"]], b_prev], axis=1)
         # earlier buckets, same item
         gi = g.sort_values(["user", "item", "ts"], kind="stable")
-        gi_prev = _prior_sums(gi, ["user", "item"], ["one", "correct"]).rename(columns=lambda c: c + "_item")
+        gi_prev = _prior_sums(gi, ["user", "item"], ["one", "correct"]).rename(
+            columns=lambda c: c + "_item"
+        )
         g = g.join(gi_prev)
         # earlier buckets, same topic (all its items)
         gt = g.groupby(["user", "topic", "ts"], sort=False)[["one", "correct"]].sum().reset_index()
         gt = gt.sort_values(["user", "topic", "ts"], kind="stable")
-        gt_prev = _prior_sums(gt, ["user", "topic"], ["one", "correct"]).rename(columns=lambda c: c + "_topic")
+        gt_prev = _prior_sums(gt, ["user", "topic"], ["one", "correct"]).rename(
+            columns=lambda c: c + "_topic"
+        )
         gt = pd.concat([gt[["user", "topic", "ts"]], gt_prev], axis=1)
         # 2. back to rows, plus running counts on this item inside this bucket
         keys = a[["user", "ts", "item", "topic"]]
@@ -91,7 +101,9 @@ def build(attempts: pd.DataFrame, items: pd.DataFrame, item_stats: pd.DataFrame,
         row.index = a.index
         n_item = row["one_item"] + inb["one"]
         c_item = row["correct_item"] + inb["correct"]
-        n_topic = row["one_topic"] - row["one_item"]  # other exercises of the topic, earlier buckets
+        n_topic = (
+            row["one_topic"] - row["one_item"]
+        )  # other exercises of the topic, earlier buckets
         c_topic = row["correct_topic"] - row["correct_item"]
         n_all = row["one"] + inb["one"]
         c_all = row["correct"] + inb["correct"]
@@ -113,14 +125,22 @@ def build(attempts: pd.DataFrame, items: pd.DataFrame, item_stats: pd.DataFrame,
     # last visible attempt on this item: the previous row in (user, item) order is
     # either an earlier bucket or earlier in this item's session, both visible
     order = a.sort_values(["user", "item", "ts", "session", "number"], kind="stable")
-    prev = order.groupby(["user", "item"], sort=False)[["correct", "ts", "hints", "tries", "log_sec"]].shift(1)
+    prev = order.groupby(["user", "item"], sort=False)[
+        ["correct", "ts", "hints", "tries", "log_sec"]
+    ].shift(1)
     prev = prev.reindex(a.index)
     out["last_correct"] = prev["correct"].fillna(-1).to_numpy(np.float32)
-    out["last_hint"] = (prev["hints"] > 0).astype(np.float32).where(prev["hints"].notna(), -1).to_numpy(np.float32)
-    out["last_retry"] = (prev["tries"] > 1).astype(np.float32).where(prev["tries"].notna(), -1).to_numpy(np.float32)
+    out["last_hint"] = (
+        (prev["hints"] > 0).astype(np.float32).where(prev["hints"].notna(), -1).to_numpy(np.float32)
+    )
+    out["last_retry"] = (
+        (prev["tries"] > 1).astype(np.float32).where(prev["tries"].notna(), -1).to_numpy(np.float32)
+    )
     out["last_log_sec"] = prev["log_sec"].fillna(-1).to_numpy(np.float32)
     gap = ((a["ts"] - prev["ts"]) / DAY).to_numpy(np.float32)
-    out["log_days_item"] = np.where(np.isnan(gap), -1.0, np.log1p(np.maximum(gap, 0))).astype(np.float32)
+    out["log_days_item"] = np.where(np.isnan(gap), -1.0, np.log1p(np.maximum(gap, 0))).astype(
+        np.float32
+    )
 
     # population difficulty of the exercise (training students only) and its label
     st = item_stats.reindex(a["item"].to_numpy())
@@ -165,7 +185,9 @@ def neighbour_counts(a: pd.DataFrame, graph: Graph, naive: bool) -> tuple[np.nda
     ev["row"] = -1
     allv = pd.concat([ev, q], ignore_index=True)
     # events strictly before the query: sort ties so queries come first
-    allv = allv.sort_values(["user", "item", "time", "q"], ascending=[True, True, True, False], kind="stable")
+    allv = allv.sort_values(
+        ["user", "item", "time", "q"], ascending=[True, True, True, False], kind="stable"
+    )
     cum = allv.groupby(["user", "item"], sort=False)[["one", "correct"]].cumsum()
     is_q = allv["q"].to_numpy() == 1
     n_nb = np.empty(len(a), np.float32)

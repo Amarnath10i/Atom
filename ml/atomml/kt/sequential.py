@@ -191,7 +191,9 @@ def _bkt_pass(user, item, correct, prior, learn, guess, slip, collect):
 
 
 class BKT:
-    def __init__(self, n_items: int, iterations: int = 25, max_guess: float = 0.3, max_slip: float = 0.3):
+    def __init__(
+        self, n_items: int, iterations: int = 25, max_guess: float = 0.3, max_slip: float = 0.3
+    ):
         self.n_items = n_items
         self.iterations = iterations
         self.max_guess, self.max_slip = max_guess, max_slip
@@ -202,7 +204,9 @@ class BKT:
 
     def fit(self, user, item, correct) -> BKT:
         for _ in range(self.iterations):
-            _, st = _bkt_pass(user, item, correct, self.prior, self.learn, self.guess, self.slip, True)
+            _, st = _bkt_pass(
+                user, item, correct, self.prior, self.learn, self.guess, self.slip, True
+            )
             has = st[:, 1] > 0
             # light Beta(2, 2)-style smoothing keeps rarely practised exercises sane
             self.prior[has] = (st[has, 0] + 1) / (st[has, 1] + 2)
@@ -212,5 +216,78 @@ class BKT:
         return self
 
     def predict(self, user, item, correct) -> np.ndarray:
-        pred, _ = _bkt_pass(user, item, correct, self.prior, self.learn, self.guess, self.slip, False)
+        pred, _ = _bkt_pass(
+            user, item, correct, self.prior, self.learn, self.guess, self.slip, False
+        )
         return pred
+
+
+@njit(cache=True)
+def elo_buckets(user, bucket, item, topic, correct, b, nb, alpha, beta, learn_items, n_topics):
+    """`elo` under the visibility rule: every attempt in a 15-minute bucket is
+    predicted from the ratings at the start of the bucket plus the earlier
+    attempts on its own exercise; the bucket's updates are applied together
+    when it ends. Rows: sorted by (user, bucket, item, session, number)."""
+    n = len(user)
+    out = np.empty(n)
+    theta = 0.0
+    n_theta = 0.0
+    theta_t = np.zeros(n_topics)
+    n_t = np.zeros(n_topics)
+    d_t = np.zeros(n_topics)
+    c_t = np.zeros(n_topics)
+    seen = np.zeros(n_topics, dtype=np.int64)
+    touched = np.empty(n_topics, dtype=np.int64)
+    epoch = 0
+    i = 0
+    while i < n:
+        if i == 0 or user[i] != user[i - 1]:
+            epoch += 1
+            theta = 0.0
+            n_theta = 0.0
+        j = i
+        while j < n and bucket[j] == bucket[i]:
+            j += 1
+        d_theta = 0.0
+        c_theta = 0.0
+        n_touched = 0
+        r = i
+        while r < j:
+            s = r
+            while r < j and item[r] == item[s]:
+                r += 1
+            k = item[s]
+            t = topic[s]
+            if seen[t] != epoch:
+                seen[t] = epoch
+                theta_t[t] = 0.0
+                n_t[t] = 0.0
+            th, nth, tht, ntt = theta, n_theta, theta_t[t], n_t[t]
+            for q in range(s, r):
+                p = _sigmoid(th + tht - b[k])
+                out[q] = p
+                err = correct[q] - p
+                th += alpha / (1.0 + beta * nth) * err
+                tht += alpha / (1.0 + beta * ntt) * err
+                nth += 1.0
+                ntt += 1.0
+                if learn_items:
+                    b[k] -= alpha / (1.0 + beta * nb[k]) * err
+                    nb[k] += 1.0
+            d_theta += th - theta
+            c_theta += r - s
+            if c_t[t] == 0:
+                touched[n_touched] = t
+                n_touched += 1
+            d_t[t] += tht - theta_t[t]
+            c_t[t] += r - s
+        theta += d_theta
+        n_theta += c_theta
+        for z in range(n_touched):
+            t = touched[z]
+            theta_t[t] += d_t[t]
+            n_t[t] += c_t[t]
+            d_t[t] = 0.0
+            c_t[t] = 0.0
+        i = j
+    return out

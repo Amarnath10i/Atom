@@ -50,7 +50,9 @@ def ece(y: np.ndarray, p: np.ndarray, bins: int = 15) -> float:
     edges = np.quantile(p, np.linspace(0, 1, bins + 1))
     idx = np.clip(np.searchsorted(edges, p, side="right") - 1, 0, bins - 1)
     count = np.bincount(idx, minlength=bins)
-    gap = np.abs(np.bincount(idx, weights=p, minlength=bins) - np.bincount(idx, weights=y, minlength=bins))
+    gap = np.abs(
+        np.bincount(idx, weights=p, minlength=bins) - np.bincount(idx, weights=y, minlength=bins)
+    )
     return float(gap.sum() / max(count.sum(), 1))
 
 
@@ -72,7 +74,9 @@ def _user_draws(users: np.ndarray, n_boot: int, seed: int) -> tuple[np.ndarray, 
     return counts, inv
 
 
-def score(y: np.ndarray, p: np.ndarray, users: np.ndarray, n_boot: int = 200, seed: int = 0) -> Scores:
+def score(
+    y: np.ndarray, p: np.ndarray, users: np.ndarray, n_boot: int = 200, seed: int = 0
+) -> Scores:
     y = y.astype(np.float64)
     order = np.argsort(p, kind="stable")
     counts, inv = _user_draws(users, n_boot, seed)
@@ -93,7 +97,12 @@ def score(y: np.ndarray, p: np.ndarray, users: np.ndarray, n_boot: int = 200, se
 
 
 def paired_auc_difference(
-    y: np.ndarray, p_a: np.ndarray, p_b: np.ndarray, users: np.ndarray, n_boot: int = 200, seed: int = 0
+    y: np.ndarray,
+    p_a: np.ndarray,
+    p_b: np.ndarray,
+    users: np.ndarray,
+    n_boot: int = 200,
+    seed: int = 0,
 ) -> tuple[float, float, float]:
     """AUC(b) - AUC(a) on the same attempts, with a clustered-bootstrap interval."""
     y = y.astype(np.float64)

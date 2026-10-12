@@ -91,7 +91,9 @@ def test_elo_learns_item_difficulty_order_on_rasch_data():
             ys.append(int(rng.random() < 1 / (1 + np.exp(-(theta - b_true[k])))))
     b, nb = np.zeros(3), np.zeros(3)
     topic = np.zeros(len(users), np.int64)
-    elo(np.array(users), np.array(items), topic, np.array(ys, np.float64), b, nb, 0.4, 0.05, True, 1)
+    elo(
+        np.array(users), np.array(items), topic, np.array(ys, np.float64), b, nb, 0.4, 0.05, True, 1
+    )
     assert np.argsort(b).tolist() == [0, 1, 2]
     assert np.corrcoef(b, b_true)[0, 1] > 0.99
 
@@ -110,3 +112,24 @@ def test_atom_rule_matches_the_app():
     s1 = min(0.5, 0.35 + 0.05 * mult)  # new atom after a perfect session
     stability = 1.5 + 2 * 1 + 3
     assert pred[1] == pred[2] == pytest.approx(s1 * (0.55 + 0.45 * np.exp(-1 / stability)))
+
+
+def test_bucketed_elo_ignores_other_exercises_in_the_same_bucket():
+    from atomml.kt.sequential import elo_buckets
+
+    # one student, two buckets; bucket 0 has exercises 0 and 1, bucket 1 has exercise 0
+    user = np.zeros(4, np.int64)
+    bucket = np.array([0, 0, 0, 1])
+    item = np.array([0, 0, 1, 0])
+    topic = np.zeros(4, np.int64)
+
+    def run(correct):
+        b, nb = np.zeros(2), np.zeros(2)
+        return elo_buckets(
+            user, bucket, item, topic, np.array(correct, np.float64), b, nb, 0.4, 0.05, False, 1
+        )
+
+    a, b = run([1, 0, 1, 1]), run([1, 0, 0, 1])  # only exercise 1's answer differs
+    assert a[:3].tolist() == b[:3].tolist()  # nothing in bucket 0 saw it
+    assert a[1] != a[0]  # same-exercise history inside the bucket is visible
+    assert a[3] != b[3]  # the next bucket does see it

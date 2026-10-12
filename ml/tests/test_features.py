@@ -20,7 +20,9 @@ def toy(seed=0, n_users=30, n_rows=400, n_items=6):
         "sec": rng.integers(5, 200, n_rows), "tries": rng.integers(1, 3, n_rows), "hints": rng.integers(0, 2, n_rows),
     }).drop_duplicates(["user", "ts", "item", "session", "number"])  # fmt: skip
     a = a.sort_values(["user", "ts", "item", "session", "number"], ignore_index=True)
-    items = pd.DataFrame({"difficulty": np.zeros(n_items, np.int8), "level4": np.arange(n_items) // 2})
+    items = pd.DataFrame(
+        {"difficulty": np.zeros(n_items, np.int8), "level4": np.arange(n_items) // 2}
+    )
     graph = Graph("ring", sp.csr_matrix((np.ones(n_items), (np.arange(n_items), (np.arange(n_items) + 1) % n_items)),
                                         shape=(n_items, n_items)))  # fmt: skip
     return a, items, graph
@@ -37,7 +39,11 @@ def test_features_ignore_the_future_and_same_bucket_other_exercises():
     rng = np.random.default_rng(1)
     for r in rng.choice(len(a), 25, replace=False):
         later = (a["user"] == a.at[r, "user"]) & (a["ts"] > a.at[r, "ts"])
-        same_bucket_other = (a["user"] == a.at[r, "user"]) & (a["ts"] == a.at[r, "ts"]) & (a["item"] != a.at[r, "item"])
+        same_bucket_other = (
+            (a["user"] == a.at[r, "user"])
+            & (a["ts"] == a.at[r, "ts"])
+            & (a["item"] != a.at[r, "item"])
+        )
         changed = a.copy()
         mask = (later | same_bucket_other).to_numpy()
         changed.loc[mask, "correct"] = 1 - changed.loc[mask, "correct"]
@@ -53,7 +59,11 @@ def test_naive_ordering_leaks_same_bucket_answers():
     # find a row whose bucket has another exercise sorted before it
     for r in range(1, len(a)):
         prev = a.loc[r - 1]
-        if prev["user"] == a.at[r, "user"] and prev["ts"] == a.at[r, "ts"] and prev["item"] != a.at[r, "item"]:
+        if (
+            prev["user"] == a.at[r, "user"]
+            and prev["ts"] == a.at[r, "ts"]
+            and prev["item"] != a.at[r, "item"]
+        ):
             break
     changed = a.copy()
     changed.loc[r - 1, "correct"] = 1 - changed.loc[r - 1, "correct"]
