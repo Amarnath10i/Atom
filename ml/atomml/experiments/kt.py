@@ -21,6 +21,7 @@ inflates AUC, and how each model does on a student's first attempts.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 
@@ -30,7 +31,9 @@ import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
+from atomml.config import settings
 from atomml.experiments.common import (
+    CACHE,
     arrays,
     data,
     features,
@@ -176,6 +179,10 @@ def run_feature_models(
             f"lightgbm_{variant}{suffix}",
             booster.predict(x[te], num_iteration=booster.best_iteration),
         )
+        # the evaluated model itself, for export (the "atom" variant is what ships)
+        booster.save_model(
+            str(CACHE / f"lightgbm_{variant}{suffix}.txt"), num_iteration=booster.best_iteration
+        )
         imp = pd.Series(booster.feature_importance("gain"), index=cols)
         out[variant] = {
             "trees": booster.best_iteration,
@@ -304,4 +311,12 @@ def run() -> str:
         ]
     )  # fmt: skip
     write_report("knowledge_tracing", text)
+    summary = {
+        "test_students": int(len(np.unique(users))),
+        "test_attempts": int(te.sum()),
+        "models": {k: {"name": NAMES[k], "auc": scores[k].auc, "log_loss": scores[k].log_loss,
+                       "brier": scores[k].brier, "ece": scores[k].ece} for k in scores},
+    }  # fmt: skip
+    path = settings.paths.reports / "knowledge_tracing.json"
+    path.write_text(json.dumps(summary, indent=2) + chr(10), encoding="utf-8")
     return text

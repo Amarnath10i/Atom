@@ -140,7 +140,7 @@ def _fit(model, make_train_batches, predict, valid_y, epochs, lr=1e-3):
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
-            total += float(loss)
+            total += float(loss.detach())
         auc = weighted_auc(valid_y, predict(model, "valid"))
         log.info("%s epoch %d: train loss %.4f, valid AUC %.4f (%.0fs)", type(model).__name__, epoch + 1,
                  total, auc, time.perf_counter() - t0)  # fmt: skip
@@ -188,7 +188,7 @@ def run_dkt(A, n_inb, c_inb, step, b_gap, epochs=8, batch=48):
     return predict(model, "test"), best
 
 
-def run_sakt(A, n_inb, c_inb, epochs=8, batch=96):
+def run_sakt(A, n_inb, c_inb, epochs=15, batch=96):
     torch.manual_seed(0)
     model = SAKT(data().n_items, window=SAKT_WINDOW).to(DEVICE)
     train = sakt_windows(A, "train", SAKT_WINDOW)

@@ -97,7 +97,9 @@ def build(attempts: pd.DataFrame, items: pd.DataFrame, item_stats: pd.DataFrame,
         row = (keys.merge(g[["user", "ts", "item", "one_item", "correct_item"]], on=["user", "ts", "item"], how="left")
                    .merge(gt, on=["user", "topic", "ts"], how="left")
                    .merge(b, on=["user", "ts"], how="left"))  # fmt: skip
-        inb = _prior_sums(a, ["user", "ts", "item"], ["one", "correct"])
+        inb = _prior_sums(
+            a, ["user", "ts", "item"], ["one", "correct", "hint_any", "retry", "log_sec"]
+        )
         row.index = a.index
         n_item = row["one_item"] + inb["one"]
         c_item = row["correct_item"] + inb["correct"]
@@ -107,7 +109,12 @@ def build(attempts: pd.DataFrame, items: pd.DataFrame, item_stats: pd.DataFrame,
         c_topic = row["correct_topic"] - row["correct_item"]
         n_all = row["one"] + inb["one"]
         c_all = row["correct"] + inb["correct"]
-        behav = row[["hint_any", "retry", "log_sec"]]
+        # same rows as n_all: earlier buckets plus this exercise earlier in the session
+        behav = (
+            row[["hint_any", "retry", "log_sec"]].to_numpy()
+            + inb[["hint_any", "retry", "log_sec"]].to_numpy()
+        )
+        behav = pd.DataFrame(behav, columns=["hint_any", "retry", "log_sec"], index=a.index)
         out["n_in_session"] = inb["one"].to_numpy(np.float32)
         out["acc_in_session"] = _smoothed(inb["correct"], inb["one"], 0.7, 2.0)
 

@@ -90,3 +90,17 @@ def test_counts_match_a_direct_scan():
         assert f.at[r, "n_all"] == pytest.approx(np.log1p(n_all))
         assert f.at[r, "n_nb_ring"] == pytest.approx(np.log1p(n_nb))
         assert f.at[r, "n_in_session"] == len(same_session)
+
+
+def test_behaviour_rates_average_over_exactly_the_visible_attempts():
+    a, items, graph = toy(seed=4)
+    f = features(a, items, graph)
+    for r in range(0, len(a), 9):
+        u, t, i = a.at[r, "user"], a.at[r, "ts"], a.at[r, "item"]
+        mine = a[a["user"] == u]
+        seen = mine[(mine["ts"] < t) | ((mine["ts"] == t) & (mine["item"] == i) & (mine.index < r))]
+        n = max(len(seen), 1)
+        assert f.at[r, "mean_log_sec"] == pytest.approx(
+            np.log1p(seen["sec"].astype(float)).sum() / n, rel=1e-5
+        )
+        assert f.at[r, "hint_rate"] == pytest.approx((seen["hints"] > 0).sum() / n, rel=1e-5)
