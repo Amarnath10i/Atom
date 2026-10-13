@@ -1,0 +1,101 @@
+{
+  "features": [
+    "n_in_session",
+    "acc_in_session",
+    "n_item",
+    "acc_item",
+    "n_topic",
+    "acc_topic",
+    "n_all",
+    "acc_all",
+    "mean_log_sec",
+    "last_correct",
+    "last_log_sec",
+    "log_days_item",
+    "difficulty"
+  ],
+  "smoothing": {
+    "prior": 0.7,
+    "strength": 2.0,
+    "strength_all": 5.0
+  },
+  "trees": 318,
+  "half_life": {
+    "theta": [
+      7.636299077572828,
+      -0.03353178416135162,
+      -0.16681927203477784
+    ],
+    "features": [
+      "bias",
+      "sqrt(1+right)",
+      "sqrt(1+wrong)"
+    ],
+    "source": "half-life regression fitted on Duolingo's scheduled reviews (practice history only); see ml/reports/memory.md"
+  },
+  "trained_on": "Junyi Academy maths practice: 16.2M attempts, 72,758 students (training: 70% of students)",
+  "evaluation": {
+    "test_students": 14453,
+    "test_attempts": 3233649,
+    "shipped": {
+      "name": "LightGBM, signals Atom records",
+      "auc": [
+        0.741765394040879,
+        0.7387268299276584,
+        0.7451752876881583
+      ],
+      "log_loss": [
+        0.5240431653277026,
+        0.5194627061699062,
+        0.5277536991859209
+      ],
+      "brier": 0.17412962672928092,
+      "ece": 0.0009787825312751366
+    },
+    "atom_rule_before": {
+      "name": "Atom today: mastery rule, recalibrated",
+      "auc": [
+        0.589622645691737,
+        0.5872106987429737,
+        0.5922726805247192
+      ],
+      "log_loss": [
+        0.5923188308510651,
+        0.5860437498028562,
+        0.5961496220438398
+      ],
+      "brier": 0.20175884439017383,
+      "ece": 0.02692707608224509
+    },
+    "atom_rule_as_displayed": {
+      "name": "Atom today: mastery rule, as displayed",
+      "auc": [
+        0.5896226426034163,
+        0.5872106899032415,
+        0.5922726941855234
+      ],
+      "log_loss": [
+        0.9845162076275765,
+        0.9811408755597015,
+        0.9885002963486145
+      ],
+      "brier": 0.36955389838335634,
+      "ece": 0.40940240207043394
+    },
+    "best_model": {
+      "name": "LightGBM, full features",
+      "auc": [
+        0.7612159583837383,
+        0.7585068419918783,
+        0.7642115687769646
+      ],
+      "log_loss": [
+        0.5101384409897775,
+        0.5055252163682017,
+        0.5138293759732366
+      ],
+      "brier": 0.1690106367539194,
+      "ece": 0.0008534090993770672
+    }
+  }
+}
