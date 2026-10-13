@@ -1,0 +1,14 @@
+{
+  "half_life_theta": [
+    7.636299077572828,
+    -0.03353178416135162,
+    -0.16681927203477784
+  ],
+  "features": [
+    "bias",
+    "sqrt(1+right)",
+    "sqrt(1+wrong)"
+  ],
+  "unit": "days",
+  "source": "half-life regression fitted on Duolingo's scheduled reviews (practice history only); see ml/reports/memory.md"
+}
