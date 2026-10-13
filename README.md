@@ -1,12 +1,54 @@
-# LAMA — Layered Atomic Memory Architecture
-### Multi-Agent JEE / NEET Tutor
+# Atom
 
-> Five specialist AI agents over a persistent molecular memory graph.  
-> Runs on Ollama (local or Ollama Cloud). Zero hardcoded keys. Runs in VS Code in 5 minutes.
+**An AI tutor for JEE / NEET whose student model is learned from 16 million practice attempts, not hand-set.**
 
----
+Atom (internally *LAMA*, Layered Atomic Memory Architecture) is a multi-agent tutor:
+five specialist agents read and write a per-student memory graph of topics
+("atoms") and links between them ("bonds"), and a planner schedules reviews.
+The memory graph used to be driven by hand-picked numbers. The [`ml/`](ml/)
+package replaces them with models trained and evaluated on real learner data
+and ships the winner to the app, with serving tested to reproduce training exactly.
 
-## ⚡ Quick Start
+Live: [theatom.vercel.app](https://theatom.vercel.app) (web) · [atom-agents.vercel.app](https://atom-agents.vercel.app) (agents API)
+
+## What the ML found
+
+All numbers are on learners the models never saw, with 95% bootstrap intervals
+over learners. Details and every table: [ml/README.md](ml/README.md), [`ml/reports/`](ml/reports/).
+
+**Will this student answer the next question correctly?** Junyi Academy, 3.2M attempts by 14,453 held-out students.
+
+| model | AUC | log loss | calibration error |
+|---|---|---|---|
+| Atom's old mastery rule, as displayed | 0.590 (0.587–0.592) | 0.985 | 0.409 |
+| BKT per exercise | 0.736 | 0.529 | 0.007 |
+| SAKT (self-attention) | 0.741 | 0.526 | 0.006 |
+| **LightGBM on signals Atom records (shipped)** | **0.742 (0.739–0.745)** | **0.524** | **0.001** |
+| DKT (LSTM) | 0.755 | 0.516 | 0.010 |
+
+- **+0.152 AUC over the old rule**, which ranked right and wrong answers worse than exercise difficulty alone and showed ~35% mastery to students who get 70% right.
+- **A strict visibility rule**: Junyi timestamps are rounded to 15 minutes and 71% of attempts share a bucket with another exercise, so every model, including DKT and SAKT, only sees earlier buckets. Ignoring this inflates AUC by +0.0008: measured, not assumed.
+- **Forgetting curves**: half-life regression reproduces Settles & Meeder (ACL 2016) on Duolingo (MAE 0.127 vs the paper's 0.128). Atom's old recall formula did worse than predicting the mean, and on self-paced Junyi practice every time-decay model scores below chance, so review timing ships from the Duolingo fit.
+- **Topic graph**: at equal density, links learned from co-performance add +0.0033 AUC, a curated topic tree +0.0023, embedding neighbours +0.0007, random links 0. Atom's old cosine ≥ 0.45 rule linked 70% of all pairs.
+- **Serving parity**: replaying 3,903 attempts through the agents service gives a largest probability difference of 5.6e-16. The replay caught a float32/float64 mismatch that had moved 12% of served predictions.
+
+## How Atom works
+
+| # | Agent | Role |
+|---|---|---|
+| 0 | NemoGuard | safety pass before the LLM |
+| 1 | Curator | loads the student's top memory atoms into context |
+| 2 | Diagnostic | detects weak topics (LLM tool call) |
+| 3 | Content Curator | generates NCERT-aligned practice questions |
+| 4 | Planner | builds and updates the study plan |
+| 5 | Critic | writes the session reflection and updates atoms and bonds |
+
+- **Web app**: React + TanStack Start, streaming chat over SSE, memory-graph dashboard.
+- **Agents service**: Python FastAPI; serves the learned student model (mastery per topic and next review date from graded answers).
+- **Data**: Supabase Postgres (students, threads, memory atoms and bonds, graded answers, plans).
+- **LLM**: Ollama, local or Ollama Cloud, chosen in `.env`; no keys in code.
+
+## Quick Start
 
 ### Requirements
 - Node.js 20+ — check with `node --version`
@@ -83,7 +125,7 @@ Open **http://localhost:3000** — you'll see the landing page. Create an accoun
 
 ---
 
-## 🚀 Deploy
+## Deploy
 
 Live: **https://theatom.vercel.app** (web) and **https://atom-agents.vercel.app** (agents).
 
@@ -127,7 +169,7 @@ node --experimental-strip-types scripts/backfill-exam-units.mjs   # exam unit fo
 
 ---
 
-## 🏗 Architecture
+## Architecture
 
 ```
 Browser (React + TanStack Router)
@@ -161,20 +203,7 @@ Supabase Postgres (LAMA memory)
 
 ---
 
-## 🤖 5-Agent Pipeline
-
-| # | Agent | Role | How invoked |
-|---|-------|------|-------------|
-| 0 | **NemoGuard** | Safety pass — blocks harmful queries | Pre-LLM regex |
-| 1 | **Curator** | Reads LAMA atoms, assembles memory context | Automatic per request |
-| 2 | **Diagnostic** | Detects weak topics, logs with severity | LLM tool call |
-| 3 | **Content Curator** | Generates NCERT-aligned practice questions | LLM tool call |
-| 4 | **Planner** | Builds / updates 6-month study roadmap | LLM tool call |
-| 5 | **Critic** | Writes session reflection, updates atoms + bonds | LLM tool call |
-
----
-
-## 🔑 Model Selection (via `.env` only)
+## Model Selection (via `.env` only)
 
 ```env
 # Local Ollama (default)
@@ -191,7 +220,7 @@ No code changes needed — just edit `.env` and restart `npm run dev`.
 
 ---
 
-## 📁 Key Files
+## Key Files
 
 ```
 .env.example                          ← copy → .env, fill in keys
@@ -208,7 +237,7 @@ src/routes/student.$studentId.chat.$threadId.tsx  ← chat UI
 
 ---
 
-## 🔒 Security
+## Security
 
 - `.env` is in `.gitignore` — never committed
 - `SUPABASE_SERVICE_ROLE_KEY` only in `.server.ts` files — never reaches the browser
@@ -216,7 +245,7 @@ src/routes/student.$studentId.chat.$threadId.tsx  ← chat UI
 
 ---
 
-## 👤 Real Users (Auth) — added in v5.1
+## Real Users (Auth) — added in v5.1
 
 LAMA supports **real user sign-up**.
 

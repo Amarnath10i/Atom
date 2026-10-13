@@ -103,12 +103,14 @@ shows the gain over a base model with no topic evidence.
 
 ### LLM: the tutor and its generated questions
 
-- **Tutor accuracy on JEE Advanced** (JEEBench, `gpt-oss:120b`, 5 answers per
-  problem), and whether agreement between answers predicts mistakes:
-  [`reports/tutor.md`](reports/tutor.md) (running).
-- **Wrong answer keys.** How often LLM-written keys are wrong, and what a
-  generator-verifier check catches: [`reports/keys.md`](reports/keys.md)
-  (runs after the tutor evaluation; both share the Ollama Cloud quota).
+- **Not yet measured.** Two evaluations are implemented but have not been run
+  to completion, so there are no numbers for them yet:
+  - **Tutor accuracy on JEE Advanced** (JEEBench, 5 answers per problem, and
+    whether agreement between the answers predicts mistakes):
+    [`experiments/tutor.py`](atomml/experiments/tutor.py).
+  - **Wrong answer keys** (how often LLM-written keys are wrong, and what a
+    generator-verifier check catches):
+    [`experiments/keys.py`](atomml/experiments/keys.py).
 - **LaTeX inside JSON.** Generated questions carry LaTeX inside JSON, and strict
   parsing either rejects the reply (`\alpha` is an invalid escape) or silently
   corrupts it (`\frac` becomes a form feed). Atom then fell back to its static
